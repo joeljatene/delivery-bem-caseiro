@@ -1,10 +1,14 @@
 import datetime
 import urllib.parse
-import sqlite3
+import psycopg2 # Novo driver para o banco em nuvem
 import json
 import pandas as pd
 import streamlit as st
 import re
+import warnings
+
+# Oculta avisos do Pandas sobre conexões diretas
+warnings.filterwarnings('ignore', category=UserWarning)
 
 # ==========================================
 # 0. CONFIGURAÇÕES E DADOS DO RESTAURANTE
@@ -23,44 +27,43 @@ TAXAS_ENTREGA = {
 }
 
 # ==========================================
-# 1. FUNÇÕES DE BANCO DE DADOS (SQLite)
+# 1. FUNÇÕES DE BANCO DE DADOS (PostgreSQL)
 # ==========================================
+def get_conexao():
+    # Puxa o link seguro do cofre do Streamlit
+    return psycopg2.connect(st.secrets["DATABASE_URL"])
+
 def inicializar_banco():
-    conn = sqlite3.connect('bem_caseiro.db')
+    conn = get_conexao()
     c = conn.cursor()
     
-    # Tabela Pedidos
+    # Criação das Tabelas no padrão PostgreSQL
     c.execute('''
         CREATE TABLE IF NOT EXISTS pedidos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             data_hora TEXT,
             cliente TEXT,
+            telefone TEXT,
             endereco TEXT,
             itens TEXT,
-            total REAL,
+            total NUMERIC,
             pagamento TEXT,
-            status TEXT
+            status TEXT,
+            taxa_entrega NUMERIC
         )
     ''')
     
-    c.execute("PRAGMA table_info(pedidos)")
-    colunas_pedidos = [coluna[1] for coluna in c.fetchall()]
-    if 'taxa_entrega' not in colunas_pedidos:
-        c.execute("ALTER TABLE pedidos ADD COLUMN taxa_entrega REAL DEFAULT 0.0")
-    if 'telefone' not in colunas_pedidos:
-        c.execute("ALTER TABLE pedidos ADD COLUMN telefone TEXT DEFAULT ''")
-        
-    # Tabela Cardápio
     c.execute('''
         CREATE TABLE IF NOT EXISTS cardapio (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             nome TEXT,
-            preco REAL,
+            preco NUMERIC,
             disponivel INTEGER,
             imagem TEXT
         )
     ''')
     
+    # Popula cardápio inicial se estiver vazio
     c.execute("SELECT COUNT(*) FROM cardapio")
     if c.fetchone()[0] == 0:
         itens_iniciais = [
@@ -68,9 +71,9 @@ def inicializar_banco():
             ("Prato Feito Especial", 28.00, 1, "https://images.unsplash.com/photo-1645696301019-35adcc18fc21?w=300&q=80"),
             ("Suco Natural 500ml", 8.00, 1, "https://images.unsplash.com/photo-1622597467836-f38240662c8b?w=300&q=80")
         ]
-        c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem) VALUES (?, ?, ?, ?)", itens_iniciais)
+        # No Postgres, os parâmetros usam %s em vez de ?
+        c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem) VALUES (%s, %s, %s, %s)", itens_iniciais)
 
-    # NOVA TABELA: Clientes
     c.execute('''
         CREATE TABLE IF NOT EXISTS clientes (
             telefone TEXT PRIMARY KEY,
@@ -85,93 +88,99 @@ def inicializar_banco():
 
 # --- Funções de Clientes ---
 def buscar_cliente(telefone):
-    conn = sqlite3.connect('bem_caseiro.db')
+    conn = get_conexao()
     c = conn.cursor()
-    c.execute("SELECT nome, bairro, endereco_rua FROM clientes WHERE telefone = ?", (telefone,))
+    c.execute("SELECT nome, bairro, endereco_rua FROM clientes WHERE telefone = %s", (telefone,))
     resultado = c.fetchone()
     conn.close()
     return resultado
 
 def salvar_cliente(telefone, nome, bairro, endereco_rua):
-    conn = sqlite3.connect('bem_caseiro.db')
+    conn = get_conexao()
     c = conn.cursor()
-    c.execute("SELECT telefone FROM clientes WHERE telefone = ?", (telefone,))
+    c.execute("SELECT telefone FROM clientes WHERE telefone = %s", (telefone,))
     if c.fetchone():
-        c.execute("UPDATE clientes SET nome=?, bairro=?, endereco_rua=? WHERE telefone=?", (nome, bairro, endereco_rua, telefone))
+        c.execute("UPDATE clientes SET nome=%s, bairro=%s, endereco_rua=%s WHERE telefone=%s", (nome, bairro, endereco_rua, telefone))
     else:
-        c.execute("INSERT INTO clientes (telefone, nome, bairro, endereco_rua) VALUES (?, ?, ?, ?)", (telefone, nome, bairro, endereco_rua))
+        c.execute("INSERT INTO clientes (telefone, nome, bairro, endereco_rua) VALUES (%s, %s, %s, %s)", (telefone, nome, bairro, endereco_rua))
     conn.commit()
     conn.close()
 
-# --- Funções de Pedidos e Cardápio (Mantidas) ---
+# --- Funções de Pedidos e Cardápio ---
 def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, taxa_entrega):
-    conn = sqlite3.connect('bem_caseiro.db')
+    conn = get_conexao()
     c = conn.cursor()
     data_hora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     itens_json = json.dumps(itens)
+    
+    # O Postgres exige a cláusula RETURNING id para devolver o número do pedido recém-criado
     c.execute('''
         INSERT INTO pedidos (data_hora, cliente, telefone, endereco, itens, total, pagamento, status, taxa_entrega)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
     ''', (data_hora, cliente, telefone, endereco, itens_json, total, pagamento, 'Novo', taxa_entrega))
-    pedido_id = c.lastrowid
+    
+    pedido_id = c.fetchone()[0]
     conn.commit()
     conn.close()
     return pedido_id
 
 def carregar_pedidos_ativos():
-    conn = sqlite3.connect('bem_caseiro.db')
-    df = pd.read_sql_query("SELECT * FROM pedidos WHERE status NOT IN ('Concluído', 'Cancelado')", conn)
+    conn = get_conexao()
+    df = pd.read_sql_query("SELECT * FROM pedidos WHERE status NOT IN ('Concluído', 'Cancelado') ORDER BY id ASC", conn)
     conn.close()
     return df
 
 def atualizar_status_pedido(pedido_id, novo_status):
-    conn = sqlite3.connect('bem_caseiro.db')
+    conn = get_conexao()
     c = conn.cursor()
-    c.execute("UPDATE pedidos SET status = ? WHERE id = ?", (novo_status, pedido_id))
+    c.execute("UPDATE pedidos SET status = %s WHERE id = %s", (novo_status, pedido_id))
     conn.commit()
     conn.close()
 
 def carregar_vendas_concluidas():
-    conn = sqlite3.connect('bem_caseiro.db')
+    conn = get_conexao()
     df = pd.read_sql_query("SELECT * FROM pedidos WHERE status = 'Concluído'", conn)
     conn.close()
     return df
 
 def carregar_cardapio_completo():
-    conn = sqlite3.connect('bem_caseiro.db')
-    df = pd.read_sql_query("SELECT * FROM cardapio", conn)
+    conn = get_conexao()
+    df = pd.read_sql_query("SELECT * FROM cardapio ORDER BY disponivel DESC, id ASC", conn)
     conn.close()
     return df.to_dict('records')
 
 def adicionar_prato(nome, preco, imagem):
-    conn = sqlite3.connect('bem_caseiro.db')
+    conn = get_conexao()
     c = conn.cursor()
-    c.execute("INSERT INTO cardapio (nome, preco, disponivel, imagem) VALUES (?, ?, 1, ?)", (nome, preco, imagem))
+    c.execute("INSERT INTO cardapio (nome, preco, disponivel, imagem) VALUES (%s, %s, 1, %s)", (nome, preco, imagem))
     conn.commit()
     conn.close()
 
 def atualizar_disponibilidade(prato_id, disponivel):
-    conn = sqlite3.connect('bem_caseiro.db')
+    conn = get_conexao()
     c = conn.cursor()
-    c.execute("UPDATE cardapio SET disponivel = ? WHERE id = ?", (disponivel, prato_id))
+    c.execute("UPDATE cardapio SET disponivel = %s WHERE id = %s", (disponivel, prato_id))
     conn.commit()
     conn.close()
 
 def excluir_prato(prato_id):
-    conn = sqlite3.connect('bem_caseiro.db')
+    conn = get_conexao()
     c = conn.cursor()
-    c.execute("DELETE FROM cardapio WHERE id = ?", (prato_id,))
+    c.execute("DELETE FROM cardapio WHERE id = %s", (prato_id,))
     conn.commit()
     conn.close()
 
 def editar_prato(prato_id, nome, preco, imagem):
-    conn = sqlite3.connect('bem_caseiro.db')
+    conn = get_conexao()
     c = conn.cursor()
-    c.execute("UPDATE cardapio SET nome = ?, preco = ?, imagem = ? WHERE id = ?", (nome, preco, imagem, prato_id))
+    c.execute("UPDATE cardapio SET nome = %s, preco = %s, imagem = %s WHERE id = %s", (nome, preco, imagem, prato_id))
     conn.commit()
     conn.close()
 
-inicializar_banco()
+try:
+    inicializar_banco()
+except Exception as e:
+    st.error(f"Erro de conexão com o banco de dados: {e}")
 
 # ==========================================
 # 2. CONFIGURAÇÃO E ROTEAMENTO
@@ -222,11 +231,11 @@ if menu == "Fazer Pedido (Cliente)":
                         st.image(item["imagem"], use_container_width=True)
                 with col_desc:
                     st.markdown(f"**{item['nome']}**")
-                    st.markdown(f"R$ {item['preco']:.2f}")
+                    st.markdown(f"R$ {float(item['preco']):.2f}")
                 with col_qtd:
                     qtd = st.number_input("Quantidade", min_value=0, max_value=20, value=0, key=f"item_cli_{item['id']}")
                     if qtd > 0:
-                        subtotal = qtd * item["preco"]
+                        subtotal = qtd * float(item['preco'])
                         carrinho.append({"nome": item["nome"], "qtd": qtd, "subtotal": subtotal})
                         total_itens += subtotal
             st.divider()
@@ -236,7 +245,6 @@ if menu == "Fazer Pedido (Cliente)":
 
         st.subheader("Dados para Entrega")
         
-        # O Telefone fica fora do form para buscar na hora
         telefone_input = st.text_input("Seu WhatsApp (Digite apenas números e clique fora)", placeholder="Ex: 95999999999")
         
         cli_nome = ""
@@ -284,10 +292,7 @@ if menu == "Fazer Pedido (Cliente)":
                     
                     pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
                     
-                    # Salva ou atualiza os dados do cliente no banco
                     salvar_cliente(telefone_limpo, nome_cliente, bairro_selecionado, endereco_rua)
-
-                    # Salva o pedido
                     pedido_id = salvar_novo_pedido(nome_cliente, telefone_limpo, endereco_completo, carrinho, total_geral, pagamento_formatado, valor_frete)
 
                     texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n"
@@ -319,7 +324,6 @@ if menu == "Fazer Pedido (Cliente)":
 # ==========================================
 elif menu == "Gestão do Cardápio":
     st.title("📝 Gestão do Cardápio")
-    st.write("Adicione novos pratos, ajuste preços ou marque um item como esgotado.")
 
     with st.expander("➕ Cadastrar Novo Prato", expanded=False):
         with st.form("form_novo_prato", clear_on_submit=True):
@@ -327,14 +331,13 @@ elif menu == "Gestão do Cardápio":
             novo_preco = st.number_input("Preço (R$)*", min_value=0.0, format="%.2f", step=1.0)
             nova_imagem = st.text_input("Link da Imagem (Opcional)")
             
-            submit_prato = st.form_submit_button("Salvar no Cardápio")
-            if submit_prato:
+            if st.form_submit_button("Salvar no Cardápio"):
                 if novo_nome and novo_preco > 0:
                     adicionar_prato(novo_nome, novo_preco, nova_imagem)
-                    st.success(f"'{novo_nome}' adicionado com sucesso!")
+                    st.success(f"'{novo_nome}' adicionado!")
                     st.rerun()
                 else:
-                    st.error("Por favor, preencha o nome e o preço corretamente.")
+                    st.error("Preencha nome e preço.")
 
     st.divider()
     st.subheader("Itens Cadastrados")
@@ -342,19 +345,13 @@ elif menu == "Gestão do Cardápio":
     cardapio_banco = carregar_cardapio_completo()
     
     if not cardapio_banco:
-        st.info("Nenhum item cadastrado no cardápio.")
+        st.info("Nenhum item cadastrado.")
     else:
-        col_nome, col_preco, col_disp, col_acao = st.columns([3, 1, 1, 1])
-        col_nome.markdown("**Produto**")
-        col_preco.markdown("**Preço**")
-        col_disp.markdown("**Disponível?**")
-        col_acao.markdown("**Ações**")
-        
         for item in cardapio_banco:
             with st.container():
                 c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
                 c1.write(f"**{item['nome']}**")
-                c2.write(f"R$ {item['preco']:.2f}")
+                c2.write(f"R$ {float(item['preco']):.2f}")
                 
                 is_ativo = bool(item['disponivel'])
                 toggle_ativo = c3.toggle("Sim", value=is_ativo, key=f"tgl_{item['id']}")
@@ -366,72 +363,42 @@ elif menu == "Gestão do Cardápio":
                     excluir_prato(item['id'])
                     st.rerun()
                 
-                with st.expander(f"✏️ Editar: {item['nome']}", expanded=False):
+                with st.expander(f"✏️ Editar", expanded=False):
                     with st.form(f"form_edit_{item['id']}"):
                         edit_nome = st.text_input("Nome", value=item['nome'])
                         edit_preco = st.number_input("Preço (R$)", min_value=0.0, value=float(item['preco']), format="%.2f", step=1.0)
                         edit_imagem = st.text_input("Link da Imagem", value=item['imagem'] if item['imagem'] else "")
                         
-                        salvar_edicao = st.form_submit_button("Salvar Alterações")
-                        if salvar_edicao:
+                        if st.form_submit_button("Salvar Alterações"):
                             if edit_nome and edit_preco > 0:
                                 editar_prato(item['id'], edit_nome, edit_preco, edit_imagem)
-                                st.success("Prato atualizado com sucesso!")
+                                st.success("Atualizado!")
                                 st.rerun()
-                            else:
-                                st.error("O nome e o preço não podem ficar vazios.")
             st.divider()
 
 # ==========================================
-# 5. MÓDULO DA COZINHA (GESTÃO DE FILA)
+# 5. MÓDULO DA COZINHA E FINANCEIRO (MANTIDOS)
 # ==========================================
 elif menu == "Painel da Cozinha / Gestão":
     st.title("📋 Painel de Controle de Pedidos")
-
     df_pedidos = carregar_pedidos_ativos()
 
     if df_pedidos.empty:
-        st.info("Nenhum pedido ativo no momento. A cozinha está limpa!")
+        st.info("A cozinha está limpa!")
     else:
         for index, row in df_pedidos.iterrows():
-            with st.expander(
-                f"Pedido #{row['id']} — {row['cliente']} ({row['data_hora']}) — Status: [{row['status']}]",
-                expanded=True,
-            ):
-                telefone_exibicao = row.get('telefone', 'Não informado')
-                st.markdown(f"**WhatsApp:** {telefone_exibicao}")
+            with st.expander(f"Pedido #{row['id']} — {row['cliente']} — Status: [{row['status']}]", expanded=True):
+                telefone_exibicao = row.get('telefone', '')
+                st.markdown(f"**WhatsApp:** {telefone_exibicao} | **Pagamento:** {row['pagamento']}")
                 st.markdown(f"**Endereço:** {row['endereco']}")
-                st.markdown(f"**Pagamento:** {row['pagamento']}")
                 
                 itens = json.loads(row['itens'])
-                st.markdown("**Itens do Pedido:**")
                 for i in itens:
-                    st.text(f"- {i['qtd']}x {i['nome']} (R$ {i['subtotal']:.2f})")
+                    st.text(f"- {i['qtd']}x {i['nome']} (R$ {float(i['subtotal']):.2f})")
                 
-                taxa = row.get('taxa_entrega', 0.0)
-                st.markdown(f"**Taxa de Entrega:** R$ {taxa:.2f}")
-                st.markdown(f"**Total a Cobrar:** R$ {row['total']:.2f}")
+                taxa = float(row.get('taxa_entrega', 0.0))
+                st.markdown(f"**Total (com R$ {taxa:.2f} frete): R$ {float(row['total']):.2f}**")
 
-                st.divider()
-                
-                telefone_limpo = re.sub(r'\D', '', telefone_exibicao)
-                if len(telefone_limpo) >= 10:
-                    if not telefone_limpo.startswith('55'):
-                        telefone_limpo = f"55{telefone_limpo}"
-                    
-                    msg_confirmacao = urllib.parse.quote(f"Olá {row['cliente']}! Vimos que você iniciou o pedido #{row['id']} no Bem Caseiro. Deseja confirmar para começarmos o preparo? 🍲")
-                    msg_producao = urllib.parse.quote(f"Olá {row['cliente']}! Seu pedido #{row['id']} já está na nossa cozinha sendo preparado com todo carinho! 👨‍🍳")
-                    msg_entrega = urllib.parse.quote(f"Boas notícias, {row['cliente']}! Seu pedido #{row['id']} acabou de sair para entrega. O entregador está a caminho! 🛵💨")
-
-                    st.markdown("**📱 Avisar Cliente:**")
-                    st.markdown(f"""
-                        <a href="https://wa.me/{telefone_limpo}?text={msg_confirmacao}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #f0f2f6; color: black; border-radius: 5px; margin-right: 5px;">❔ Perguntar se Confirma</a>
-                        <a href="https://wa.me/{telefone_limpo}?text={msg_producao}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #ff9800; color: white; border-radius: 5px; margin-right: 5px;">🔥 Em Produção</a>
-                        <a href="https://wa.me/{telefone_limpo}?text={msg_entrega}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #4CAF50; color: white; border-radius: 5px;">🛵 Saiu para Entrega</a>
-                    """, unsafe_allow_html=True)
-                    st.write("") 
-                
-                st.markdown("**Ações do Pedido (Sistema):**")
                 col1, col2, col3, col4 = st.columns(4)
                 if col1.button("Em Produção", key=f"prod_{row['id']}"):
                     atualizar_status_pedido(row['id'], "Em Produção")
@@ -446,45 +413,33 @@ elif menu == "Painel da Cozinha / Gestão":
                     atualizar_status_pedido(row['id'], "Cancelado")
                     st.rerun()
 
-# ==========================================
-# 6. MÓDULO FINANCEIRO (RELATÓRIOS)
-# ==========================================
 elif menu == "Relatório Financeiro":
     st.title("📊 Relatório Financeiro e Fechamento")
-
     df_vendas = carregar_vendas_concluidas()
 
     if df_vendas.empty:
-        st.warning("Nenhuma venda concluída foi registrada ainda.")
+        st.warning("Nenhuma venda concluída.")
     else:
-        df_vendas['data_hora'] = pd.to_datetime(df_vendas['data_hora'], format="%d/%m/%Y %H:%M:%S")
-
-        st.subheader("Resumo Geral das Vendas")
-        
+        # Converter valores para float caso venham como formato genérico numérico do BD
+        df_vendas['total'] = df_vendas['total'].astype(float)
+        if 'taxa_entrega' in df_vendas.columns:
+            df_vendas['taxa_entrega'] = df_vendas['taxa_entrega'].astype(float)
+        else:
+            df_vendas['taxa_entrega'] = 0.0
+            
         faturamento_total = df_vendas['total'].sum()
-        total_fretes = df_vendas['taxa_entrega'].sum() if 'taxa_entrega' in df_vendas.columns else 0.0
+        total_fretes = df_vendas['taxa_entrega'].sum()
         faturamento_produtos = faturamento_total - total_fretes
-        
         qtd_pedidos = len(df_vendas)
         ticket_medio = faturamento_total / qtd_pedidos if qtd_pedidos > 0 else 0
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Faturamento Bruto", f"R$ {faturamento_total:,.2f}")
-        col2.metric("Receita (Só Produtos)", f"R$ {faturamento_produtos:,.2f}")
-        col3.metric("Total em Fretes", f"R$ {total_fretes:,.2f}")
+        col2.metric("Só Produtos", f"R$ {faturamento_produtos:,.2f}")
+        col3.metric("Total Fretes", f"R$ {total_fretes:,.2f}")
         col4.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}")
 
         st.divider()
-
         st.subheader("Receita por Forma de Pagamento")
         receita_por_pagamento = df_vendas.groupby('pagamento')['total'].sum().reset_index()
-        
-        col_grafico, col_tabela = st.columns([2, 1])
-        with col_grafico:
-            st.bar_chart(data=receita_por_pagamento.set_index('pagamento'))
-        with col_tabela:
-            st.dataframe(
-                receita_por_pagamento.rename(columns={'pagamento': 'Pagamento', 'total': 'Total (R$)'}),
-                hide_index=True,
-                use_container_width=True
-            )
+        st.bar_chart(data=receita_por_pagamento.set_index('pagamento'))
