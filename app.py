@@ -135,63 +135,66 @@ if menu == "Fazer Pedido (Cliente)":
             st.divider()
 
     st.markdown(f"### Subtotal dos itens: R$ {total_itens:.2f}")
+    st.divider()
 
-    with st.form("form_cliente"):
-        st.subheader("Dados para Entrega")
-        
-        col_nome, col_tel = st.columns(2)
-        with col_nome:
-            nome_cliente = st.text_input("Nome Completo")
-        with col_tel:
-            telefone_cliente = st.text_input("WhatsApp para Contato (Ex: 95 99999-9999)")
-        
-        col_bairro, col_rua = st.columns([1, 2])
-        with col_bairro:
-            bairro_selecionado = st.selectbox("Bairro", list(TAXAS_ENTREGA.keys()))
-            valor_frete = TAXAS_ENTREGA[bairro_selecionado]
-        with col_rua:
-            endereco_rua = st.text_input("Rua, Número e Ponto de Referência")
+    st.subheader("Dados para Entrega")
+    
+    # Removido o st.form para que a tela atualize a taxa dinamicamente
+    col_nome, col_tel = st.columns(2)
+    with col_nome:
+        nome_cliente = st.text_input("Nome Completo")
+    with col_tel:
+        telefone_cliente = st.text_input("WhatsApp para Contato (Ex: 95 99999-9999)")
+    
+    col_bairro, col_rua = st.columns([1, 2])
+    with col_bairro:
+        bairro_selecionado = st.selectbox("Bairro", list(TAXAS_ENTREGA.keys()))
+        valor_frete = TAXAS_ENTREGA[bairro_selecionado]
+    with col_rua:
+        endereco_rua = st.text_input("Rua, Número e Ponto de Referência")
 
-        endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
-        total_geral = total_itens + valor_frete
+    endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
+    total_geral = total_itens + valor_frete
 
-        st.info(f"**Taxa de Entrega:** R$ {valor_frete:.2f} | **Total do Pedido:** R$ {total_geral:.2f}")
+    # Agora a caixa azul com os valores atualiza na mesma hora que o cliente troca o bairro!
+    st.info(f"**Taxa de Entrega:** R$ {valor_frete:.2f} | **Total do Pedido:** R$ {total_geral:.2f}")
 
-        pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
-        troco = st.text_input("Troco para quanto? (Se for dinheiro)")
+    pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
+    troco = st.text_input("Troco para quanto? (Se for dinheiro)")
 
-        enviar = st.form_submit_button("Finalizar e Enviar para o WhatsApp")
+    st.write("") # Espaçamento
+    # Botão de envio fora do formulário (usando type="primary" para ficar destacado)
+    enviar = st.button("Finalizar e Enviar para o WhatsApp", type="primary", use_container_width=True)
 
-        if enviar:
-            if nome_cliente and telefone_cliente and carrinho and (endereco_rua or bairro_selecionado == "Retirar no Local"):
-                pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
-                
-                # Salvando no banco com o novo campo de telefone
-                pedido_id = salvar_novo_pedido(nome_cliente, telefone_cliente, endereco_completo, carrinho, total_geral, pagamento_formatado, valor_frete)
+    if enviar:
+        if nome_cliente and telefone_cliente and carrinho and (endereco_rua or bairro_selecionado == "Retirar no Local"):
+            pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
+            
+            pedido_id = salvar_novo_pedido(nome_cliente, telefone_cliente, endereco_completo, carrinho, total_geral, pagamento_formatado, valor_frete)
 
-                texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n"
-                texto_pedido += f"👤 *Cliente:* {nome_cliente}\n"
-                texto_pedido += f"📱 *Contato:* {telefone_cliente}\n"
-                texto_pedido += f"📍 *Endereço:* {endereco_completo}\n\n"
-                texto_pedido += "*Itens do Pedido:*\n"
-                for item in carrinho:
-                    texto_pedido += f"- {item['qtd']}x {item['nome']} (R$ {item['subtotal']:.2f})\n"
-                
-                texto_pedido += f"\n📦 *Subtotal:* R$ {total_itens:.2f}"
-                texto_pedido += f"\n🛵 *Taxa de Entrega:* R$ {valor_frete:.2f}"
-                texto_pedido += f"\n💰 *Total Geral:* R$ {total_geral:.2f}\n"
-                texto_pedido += f"💳 *Pagamento:* {pagamento_formatado}"
+            texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n"
+            texto_pedido += f"👤 *Cliente:* {nome_cliente}\n"
+            texto_pedido += f"📱 *Contato:* {telefone_cliente}\n"
+            texto_pedido += f"📍 *Endereço:* {endereco_completo}\n\n"
+            texto_pedido += "*Itens do Pedido:*\n"
+            for item in carrinho:
+                texto_pedido += f"- {item['qtd']}x {item['nome']} (R$ {item['subtotal']:.2f})\n"
+            
+            texto_pedido += f"\n📦 *Subtotal:* R$ {total_itens:.2f}"
+            texto_pedido += f"\n🛵 *Taxa de Entrega:* R$ {valor_frete:.2f}"
+            texto_pedido += f"\n💰 *Total Geral:* R$ {total_geral:.2f}\n"
+            texto_pedido += f"💳 *Pagamento:* {pagamento_formatado}"
 
-                texto_codificado = urllib.parse.quote(texto_pedido)
-                link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={texto_codificado}"
+            texto_codificado = urllib.parse.quote(texto_pedido)
+            link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={texto_codificado}"
 
-                st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}. Clique abaixo para nos enviar no WhatsApp.")
-                st.markdown(
-                    f'<a href="{link_whatsapp}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 16px; border-radius: 5px;">📱 Enviar Pedido por WhatsApp</a>',
-                    unsafe_allow_html=True
-                )
-            else:
-                st.error("Por favor, preencha o nome, telefone, adicione os itens e informe o endereço completo.")
+            st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
+            st.markdown(
+                f'<a href="{link_whatsapp}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 16px; border-radius: 5px;">📱 Enviar Pedido por WhatsApp</a>',
+                unsafe_allow_html=True
+            )
+        else:
+            st.error("Por favor, preencha o nome, telefone, adicione os itens e informe o endereço completo.")
 
 # ==========================================
 # 4. MÓDULO DA COZINHA (GESTÃO DE FILA)
