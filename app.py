@@ -29,7 +29,6 @@ def inicializar_banco():
     conn = sqlite3.connect('bem_caseiro.db')
     c = conn.cursor()
     
-    # Tabela de Pedidos
     c.execute('''
         CREATE TABLE IF NOT EXISTS pedidos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +42,6 @@ def inicializar_banco():
         )
     ''')
     
-    # Atualiza colunas antigas dos pedidos
     c.execute("PRAGMA table_info(pedidos)")
     colunas_pedidos = [coluna[1] for coluna in c.fetchall()]
     if 'taxa_entrega' not in colunas_pedidos:
@@ -51,7 +49,6 @@ def inicializar_banco():
     if 'telefone' not in colunas_pedidos:
         c.execute("ALTER TABLE pedidos ADD COLUMN telefone TEXT DEFAULT ''")
         
-    # Nova Tabela: Cardápio
     c.execute('''
         CREATE TABLE IF NOT EXISTS cardapio (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,7 +59,6 @@ def inicializar_banco():
         )
     ''')
     
-    # Popula o cardápio inicial caso esteja vazio (primeiro uso)
     c.execute("SELECT COUNT(*) FROM cardapio")
     if c.fetchone()[0] == 0:
         itens_iniciais = [
@@ -75,7 +71,6 @@ def inicializar_banco():
     conn.commit()
     conn.close()
 
-# --- Funções de Pedidos ---
 def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, taxa_entrega):
     conn = sqlite3.connect('bem_caseiro.db')
     c = conn.cursor()
@@ -109,10 +104,8 @@ def carregar_vendas_concluidas():
     conn.close()
     return df
 
-# --- Funções do Cardápio ---
 def carregar_cardapio_completo():
     conn = sqlite3.connect('bem_caseiro.db')
-    # Retorna como um dicionário para o Python ler fácil
     df = pd.read_sql_query("SELECT * FROM cardapio", conn)
     conn.close()
     return df.to_dict('records')
@@ -138,10 +131,18 @@ def excluir_prato(prato_id):
     conn.commit()
     conn.close()
 
+# --- NOVA FUNÇÃO PARA EDITAR O PRATO ---
+def editar_prato(prato_id, nome, preco, imagem):
+    conn = sqlite3.connect('bem_caseiro.db')
+    c = conn.cursor()
+    c.execute("UPDATE cardapio SET nome = ?, preco = ?, imagem = ? WHERE id = ?", (nome, preco, imagem, prato_id))
+    conn.commit()
+    conn.close()
+
 inicializar_banco()
 
 # ==========================================
-# 2. CONFIGURAÇÃO E ROTEAMENTO (CLIENTE VS GESTOR)
+# 2. CONFIGURAÇÃO E ROTEAMENTO
 # ==========================================
 st.set_page_config(page_title="Bem Caseiro Delivery", page_icon="🍲", layout="wide")
 
@@ -175,7 +176,6 @@ if menu == "Fazer Pedido (Cliente)":
     carrinho = []
     total_itens = 0.0
 
-    # Puxa o cardápio direto do banco de dados agora
     cardapio_banco = carregar_cardapio_completo()
     itens_disponiveis = [item for item in cardapio_banco if item['disponivel'] == 1]
     
@@ -259,7 +259,7 @@ if menu == "Fazer Pedido (Cliente)":
                 st.error("Por favor, preencha o nome, telefone, adicione os itens e informe o endereço completo.")
 
 # ==========================================
-# 4. NOVA TELA: GESTÃO DO CARDÁPIO
+# 4. GESTÃO DO CARDÁPIO (COM EDIÇÃO)
 # ==========================================
 elif menu == "Gestão do Cardápio":
     st.title("📝 Gestão do Cardápio")
@@ -288,33 +288,44 @@ elif menu == "Gestão do Cardápio":
     if not cardapio_banco:
         st.info("Nenhum item cadastrado no cardápio.")
     else:
-        # Criação de um cabeçalho para a lista
         col_nome, col_preco, col_disp, col_acao = st.columns([3, 1, 1, 1])
         col_nome.markdown("**Produto**")
         col_preco.markdown("**Preço**")
         col_disp.markdown("**Disponível?**")
-        col_acao.markdown("**Excluir**")
+        col_acao.markdown("**Ações**")
         
         for item in cardapio_banco:
-            c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
-            c1.write(item['nome'])
-            c2.write(f"R$ {item['preco']:.2f}")
-            
-            # Switch de Disponibilidade (Pausa/Esgotado)
-            is_ativo = bool(item['disponivel'])
-            toggle_ativo = c3.toggle("Sim", value=is_ativo, key=f"tgl_{item['id']}")
-            
-            # Se você clicar no botão e o valor mudar, atualiza o banco
-            if toggle_ativo != is_ativo:
-                atualizar_disponibilidade(item['id'], int(toggle_ativo))
-                st.rerun()
+            with st.container():
+                c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+                c1.write(f"**{item['nome']}**")
+                c2.write(f"R$ {item['preco']:.2f}")
                 
-            # Botão de excluir
-            if c4.button("🗑️", key=f"del_{item['id']}"):
-                excluir_prato(item['id'])
-                st.rerun()
-            
-            st.markdown("---")
+                is_ativo = bool(item['disponivel'])
+                toggle_ativo = c3.toggle("Sim", value=is_ativo, key=f"tgl_{item['id']}")
+                if toggle_ativo != is_ativo:
+                    atualizar_disponibilidade(item['id'], int(toggle_ativo))
+                    st.rerun()
+                    
+                if c4.button("🗑️ Excluir", key=f"del_{item['id']}"):
+                    excluir_prato(item['id'])
+                    st.rerun()
+                
+                # --- ABA DE EDIÇÃO QUE SE EXPANDE ABAIXO DO ITEM ---
+                with st.expander(f"✏️ Editar: {item['nome']}", expanded=False):
+                    with st.form(f"form_edit_{item['id']}"):
+                        edit_nome = st.text_input("Nome", value=item['nome'])
+                        edit_preco = st.number_input("Preço (R$)", min_value=0.0, value=float(item['preco']), format="%.2f", step=1.0)
+                        edit_imagem = st.text_input("Link da Imagem", value=item['imagem'] if item['imagem'] else "")
+                        
+                        salvar_edicao = st.form_submit_button("Salvar Alterações")
+                        if salvar_edicao:
+                            if edit_nome and edit_preco > 0:
+                                editar_prato(item['id'], edit_nome, edit_preco, edit_imagem)
+                                st.success("Prato atualizado com sucesso!")
+                                st.rerun()
+                            else:
+                                st.error("O nome e o preço não podem ficar vazios.")
+            st.divider()
 
 # ==========================================
 # 5. MÓDULO DA COZINHA (GESTÃO DE FILA)
