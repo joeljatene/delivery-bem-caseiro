@@ -29,6 +29,7 @@ def inicializar_banco():
     conn = sqlite3.connect('bem_caseiro.db')
     c = conn.cursor()
     
+    # Tabela Pedidos
     c.execute('''
         CREATE TABLE IF NOT EXISTS pedidos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,6 +50,7 @@ def inicializar_banco():
     if 'telefone' not in colunas_pedidos:
         c.execute("ALTER TABLE pedidos ADD COLUMN telefone TEXT DEFAULT ''")
         
+    # Tabela Cardápio
     c.execute('''
         CREATE TABLE IF NOT EXISTS cardapio (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,9 +70,40 @@ def inicializar_banco():
         ]
         c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem) VALUES (?, ?, ?, ?)", itens_iniciais)
 
+    # NOVA TABELA: Clientes
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS clientes (
+            telefone TEXT PRIMARY KEY,
+            nome TEXT,
+            bairro TEXT,
+            endereco_rua TEXT
+        )
+    ''')
+
     conn.commit()
     conn.close()
 
+# --- Funções de Clientes ---
+def buscar_cliente(telefone):
+    conn = sqlite3.connect('bem_caseiro.db')
+    c = conn.cursor()
+    c.execute("SELECT nome, bairro, endereco_rua FROM clientes WHERE telefone = ?", (telefone,))
+    resultado = c.fetchone()
+    conn.close()
+    return resultado
+
+def salvar_cliente(telefone, nome, bairro, endereco_rua):
+    conn = sqlite3.connect('bem_caseiro.db')
+    c = conn.cursor()
+    c.execute("SELECT telefone FROM clientes WHERE telefone = ?", (telefone,))
+    if c.fetchone():
+        c.execute("UPDATE clientes SET nome=?, bairro=?, endereco_rua=? WHERE telefone=?", (nome, bairro, endereco_rua, telefone))
+    else:
+        c.execute("INSERT INTO clientes (telefone, nome, bairro, endereco_rua) VALUES (?, ?, ?, ?)", (telefone, nome, bairro, endereco_rua))
+    conn.commit()
+    conn.close()
+
+# --- Funções de Pedidos e Cardápio (Mantidas) ---
 def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, taxa_entrega):
     conn = sqlite3.connect('bem_caseiro.db')
     c = conn.cursor()
@@ -131,7 +164,6 @@ def excluir_prato(prato_id):
     conn.commit()
     conn.close()
 
-# --- NOVA FUNÇÃO PARA EDITAR O PRATO ---
 def editar_prato(prato_id, nome, preco, imagem):
     conn = sqlite3.connect('bem_caseiro.db')
     c = conn.cursor()
@@ -204,59 +236,83 @@ if menu == "Fazer Pedido (Cliente)":
 
         st.subheader("Dados para Entrega")
         
-        col_nome, col_tel = st.columns(2)
-        with col_nome:
-            nome_cliente = st.text_input("Nome Completo")
-        with col_tel:
-            telefone_cliente = st.text_input("WhatsApp para Contato (Ex: 95 99999-9999)")
+        # O Telefone fica fora do form para buscar na hora
+        telefone_input = st.text_input("Seu WhatsApp (Digite apenas números e clique fora)", placeholder="Ex: 95999999999")
         
-        col_bairro, col_rua = st.columns([1, 2])
-        with col_bairro:
-            bairro_selecionado = st.selectbox("Bairro", list(TAXAS_ENTREGA.keys()))
-            valor_frete = TAXAS_ENTREGA[bairro_selecionado]
-        with col_rua:
-            endereco_rua = st.text_input("Rua, Número e Ponto de Referência")
+        cli_nome = ""
+        cli_bairro = "Centro"
+        cli_rua = ""
+        telefone_limpo = ""
 
-        endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
-        total_geral = total_itens + valor_frete
-
-        st.info(f"**Taxa de Entrega:** R$ {valor_frete:.2f} | **Total do Pedido:** R$ {total_geral:.2f}")
-
-        pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
-        troco = st.text_input("Troco para quanto? (Se for dinheiro)")
-
-        st.write("") 
-        enviar = st.button("Finalizar e Enviar para o WhatsApp", type="primary", use_container_width=True)
-
-        if enviar:
-            if nome_cliente and telefone_cliente and carrinho and (endereco_rua or bairro_selecionado == "Retirar no Local"):
-                pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
-                
-                pedido_id = salvar_novo_pedido(nome_cliente, telefone_cliente, endereco_completo, carrinho, total_geral, pagamento_formatado, valor_frete)
-
-                texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n"
-                texto_pedido += f"👤 *Cliente:* {nome_cliente}\n"
-                texto_pedido += f"📱 *Contato:* {telefone_cliente}\n"
-                texto_pedido += f"📍 *Endereço:* {endereco_completo}\n\n"
-                texto_pedido += "*Itens do Pedido:*\n"
-                for item in carrinho:
-                    texto_pedido += f"- {item['qtd']}x {item['nome']} (R$ {item['subtotal']:.2f})\n"
-                
-                texto_pedido += f"\n📦 *Subtotal:* R$ {total_itens:.2f}"
-                texto_pedido += f"\n🛵 *Taxa de Entrega:* R$ {valor_frete:.2f}"
-                texto_pedido += f"\n💰 *Total Geral:* R$ {total_geral:.2f}\n"
-                texto_pedido += f"💳 *Pagamento:* {pagamento_formatado}"
-
-                texto_codificado = urllib.parse.quote(texto_pedido)
-                link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={texto_codificado}"
-
-                st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
-                st.markdown(
-                    f'<a href="{link_whatsapp}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 16px; border-radius: 5px;">📱 Enviar Pedido por WhatsApp</a>',
-                    unsafe_allow_html=True
-                )
+        if telefone_input:
+            telefone_limpo = re.sub(r'\D', '', telefone_input)
+            if len(telefone_limpo) >= 10:
+                cliente_dados = buscar_cliente(telefone_limpo)
+                if cliente_dados:
+                    st.success("👋 Encontramos seu cadastro! Preenchemos seus dados para adiantar.")
+                    cli_nome = cliente_dados[0]
+                    cli_bairro = cliente_dados[1] if cliente_dados[1] in TAXAS_ENTREGA else "Centro"
+                    cli_rua = cliente_dados[2]
+                else:
+                    st.info("Primeira vez por aqui? Preencha os dados abaixo que já deixaremos salvo para a próxima.")
             else:
-                st.error("Por favor, preencha o nome, telefone, adicione os itens e informe o endereço completo.")
+                st.warning("Digite o telefone completo com o DDD.")
+
+        with st.form("form_cliente"):
+            nome_cliente = st.text_input("Nome Completo", value=cli_nome)
+            
+            col_bairro, col_rua = st.columns([1, 2])
+            with col_bairro:
+                idx_bairro = list(TAXAS_ENTREGA.keys()).index(cli_bairro) if cli_bairro in TAXAS_ENTREGA else 0
+                bairro_selecionado = st.selectbox("Bairro", list(TAXAS_ENTREGA.keys()), index=idx_bairro)
+                
+            with col_rua:
+                endereco_rua = st.text_input("Rua, Número e Ponto de Referência", value=cli_rua)
+
+            pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
+            troco = st.text_input("Troco para quanto? (Se for dinheiro)")
+
+            st.write("") 
+            enviar = st.form_submit_button("Finalizar e Enviar para o WhatsApp", type="primary", use_container_width=True)
+
+            if enviar:
+                if telefone_limpo and nome_cliente and carrinho and (endereco_rua or bairro_selecionado == "Retirar no Local"):
+                    
+                    valor_frete = TAXAS_ENTREGA[bairro_selecionado]
+                    endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
+                    total_geral = total_itens + valor_frete
+                    
+                    pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
+                    
+                    # Salva ou atualiza os dados do cliente no banco
+                    salvar_cliente(telefone_limpo, nome_cliente, bairro_selecionado, endereco_rua)
+
+                    # Salva o pedido
+                    pedido_id = salvar_novo_pedido(nome_cliente, telefone_limpo, endereco_completo, carrinho, total_geral, pagamento_formatado, valor_frete)
+
+                    texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n"
+                    texto_pedido += f"👤 *Cliente:* {nome_cliente}\n"
+                    texto_pedido += f"📱 *Contato:* {telefone_limpo}\n"
+                    texto_pedido += f"📍 *Endereço:* {endereco_completo}\n\n"
+                    texto_pedido += "*Itens do Pedido:*\n"
+                    for item in carrinho:
+                        texto_pedido += f"- {item['qtd']}x {item['nome']} (R$ {item['subtotal']:.2f})\n"
+                    
+                    texto_pedido += f"\n📦 *Subtotal:* R$ {total_itens:.2f}"
+                    texto_pedido += f"\n🛵 *Taxa de Entrega:* R$ {valor_frete:.2f}"
+                    texto_pedido += f"\n💰 *Total Geral:* R$ {total_geral:.2f}\n"
+                    texto_pedido += f"💳 *Pagamento:* {pagamento_formatado}"
+
+                    texto_codificado = urllib.parse.quote(texto_pedido)
+                    link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={texto_codificado}"
+
+                    st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
+                    st.markdown(
+                        f'<a href="{link_whatsapp}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 16px; border-radius: 5px;">📱 Enviar Pedido por WhatsApp</a>',
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.error("Por favor, informe seu WhatsApp, Nome, adicione os itens e informe o endereço.")
 
 # ==========================================
 # 4. GESTÃO DO CARDÁPIO (COM EDIÇÃO)
@@ -310,7 +366,6 @@ elif menu == "Gestão do Cardápio":
                     excluir_prato(item['id'])
                     st.rerun()
                 
-                # --- ABA DE EDIÇÃO QUE SE EXPANDE ABAIXO DO ITEM ---
                 with st.expander(f"✏️ Editar: {item['nome']}", expanded=False):
                     with st.form(f"form_edit_{item['id']}"):
                         edit_nome = st.text_input("Nome", value=item['nome'])
@@ -368,11 +423,11 @@ elif menu == "Painel da Cozinha / Gestão":
                     msg_producao = urllib.parse.quote(f"Olá {row['cliente']}! Seu pedido #{row['id']} já está na nossa cozinha sendo preparado com todo carinho! 👨‍🍳")
                     msg_entrega = urllib.parse.quote(f"Boas notícias, {row['cliente']}! Seu pedido #{row['id']} acabou de sair para entrega. O entregador está a caminho! 🛵💨")
 
-                    st.markdown("**📱 Avisar Cliente (Abre o WhatsApp Web):**")
+                    st.markdown("**📱 Avisar Cliente:**")
                     st.markdown(f"""
                         <a href="https://wa.me/{telefone_limpo}?text={msg_confirmacao}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #f0f2f6; color: black; border-radius: 5px; margin-right: 5px;">❔ Perguntar se Confirma</a>
-                        <a href="https://wa.me/{telefone_limpo}?text={msg_producao}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #ff9800; color: white; border-radius: 5px; margin-right: 5px;">🔥 Avisar: Em Produção</a>
-                        <a href="https://wa.me/{telefone_limpo}?text={msg_entrega}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #4CAF50; color: white; border-radius: 5px;">🛵 Avisar: Saiu para Entrega</a>
+                        <a href="https://wa.me/{telefone_limpo}?text={msg_producao}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #ff9800; color: white; border-radius: 5px; margin-right: 5px;">🔥 Em Produção</a>
+                        <a href="https://wa.me/{telefone_limpo}?text={msg_entrega}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #4CAF50; color: white; border-radius: 5px;">🛵 Saiu para Entrega</a>
                     """, unsafe_allow_html=True)
                     st.write("") 
                 
