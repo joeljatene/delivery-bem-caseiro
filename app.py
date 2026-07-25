@@ -4,6 +4,7 @@ import sqlite3
 import json
 import pandas as pd
 import streamlit as st
+import re  # Nova biblioteca para limpar formatação de telefone
 
 # ==========================================
 # 0. CONFIGURAÇÕES E DADOS DO RESTAURANTE
@@ -40,7 +41,6 @@ def inicializar_banco():
         )
     ''')
     
-    # Atualiza o banco adicionando as colunas novas sem perder dados antigos
     c.execute("PRAGMA table_info(pedidos)")
     colunas = [coluna[1] for coluna in c.fetchall()]
     
@@ -70,7 +70,8 @@ def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, tax
 
 def carregar_pedidos_ativos():
     conn = sqlite3.connect('bem_caseiro.db')
-    df = pd.read_sql_query("SELECT * FROM pedidos WHERE status != 'Concluído'", conn)
+    # Modificado para não mostrar pedidos Concluídos nem Cancelados
+    df = pd.read_sql_query("SELECT * FROM pedidos WHERE status NOT IN ('Concluído', 'Cancelado')", conn)
     conn.close()
     return df
 
@@ -139,7 +140,6 @@ if menu == "Fazer Pedido (Cliente)":
 
     st.subheader("Dados para Entrega")
     
-    # Removido o st.form para que a tela atualize a taxa dinamicamente
     col_nome, col_tel = st.columns(2)
     with col_nome:
         nome_cliente = st.text_input("Nome Completo")
@@ -156,14 +156,12 @@ if menu == "Fazer Pedido (Cliente)":
     endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
     total_geral = total_itens + valor_frete
 
-    # Agora a caixa azul com os valores atualiza na mesma hora que o cliente troca o bairro!
     st.info(f"**Taxa de Entrega:** R$ {valor_frete:.2f} | **Total do Pedido:** R$ {total_geral:.2f}")
 
     pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
     troco = st.text_input("Troco para quanto? (Se for dinheiro)")
 
-    st.write("") # Espaçamento
-    # Botão de envio fora do formulário (usando type="primary" para ficar destacado)
+    st.write("") 
     enviar = st.button("Finalizar e Enviar para o WhatsApp", type="primary", use_container_width=True)
 
     if enviar:
@@ -226,15 +224,42 @@ elif menu == "Painel da Cozinha / Gestão":
                 st.markdown(f"**Taxa de Entrega:** R$ {taxa:.2f}")
                 st.markdown(f"**Total a Cobrar:** R$ {row['total']:.2f}")
 
-                col1, col2, col3 = st.columns(3)
+                st.divider()
+                
+                # --- NOVO: SEÇÃO DE MENSAGENS NO WHATSAPP ---
+                # Limpa o telefone para conter apenas números
+                telefone_limpo = re.sub(r'\D', '', telefone_exibicao)
+                if len(telefone_limpo) >= 10:
+                    # Adiciona o 55 (Brasil) se o cliente não tiver digitado
+                    if not telefone_limpo.startswith('55'):
+                        telefone_limpo = f"55{telefone_limpo}"
+                    
+                    msg_confirmacao = urllib.parse.quote(f"Olá {row['cliente']}! Vimos que você iniciou o pedido #{row['id']} no Bem Caseiro. Deseja confirmar para começarmos o preparo? 🍲")
+                    msg_producao = urllib.parse.quote(f"Olá {row['cliente']}! Seu pedido #{row['id']} já está na nossa cozinha sendo preparado com todo carinho! 👨‍🍳")
+                    msg_entrega = urllib.parse.quote(f"Boas notícias, {row['cliente']}! Seu pedido #{row['id']} acabou de sair para entrega. O entregador está a caminho! 🛵💨")
+
+                    st.markdown("**📱 Avisar Cliente (Abre o WhatsApp Web):**")
+                    st.markdown(f"""
+                        <a href="https://wa.me/{telefone_limpo}?text={msg_confirmacao}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #f0f2f6; color: black; border-radius: 5px; margin-right: 5px;">❔ Perguntar se Confirma</a>
+                        <a href="https://wa.me/{telefone_limpo}?text={msg_producao}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #ff9800; color: white; border-radius: 5px; margin-right: 5px;">🔥 Avisar: Em Produção</a>
+                        <a href="https://wa.me/{telefone_limpo}?text={msg_entrega}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #4CAF50; color: white; border-radius: 5px;">🛵 Avisar: Saiu para Entrega</a>
+                    """, unsafe_allow_html=True)
+                    st.write("") # Espaço em branco
+                
+                # --- BOTÕES DE ALTERAÇÃO DE STATUS (SISTEMA INTERNO) ---
+                st.markdown("**Ações do Pedido (Sistema):**")
+                col1, col2, col3, col4 = st.columns(4)
                 if col1.button("Em Produção", key=f"prod_{row['id']}"):
                     atualizar_status_pedido(row['id'], "Em Produção")
                     st.rerun()
                 if col2.button("Saiu para Entrega", key=f"ent_{row['id']}"):
                     atualizar_status_pedido(row['id'], "Saiu para Entrega")
                     st.rerun()
-                if col3.button("Concluir (Arquivar)", key=f"conc_{row['id']}"):
+                if col3.button("✅ Concluir", key=f"conc_{row['id']}"):
                     atualizar_status_pedido(row['id'], "Concluído")
+                    st.rerun()
+                if col4.button("❌ Cancelar", key=f"canc_{row['id']}"):
+                    atualizar_status_pedido(row['id'], "Cancelado")
                     st.rerun()
 
 # ==========================================
