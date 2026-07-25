@@ -28,6 +28,8 @@ TAXAS_ENTREGA = {
 def inicializar_banco():
     conn = sqlite3.connect('bem_caseiro.db')
     c = conn.cursor()
+    
+    # Tabela de Pedidos
     c.execute('''
         CREATE TABLE IF NOT EXISTS pedidos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,28 +43,48 @@ def inicializar_banco():
         )
     ''')
     
+    # Atualiza colunas antigas dos pedidos
     c.execute("PRAGMA table_info(pedidos)")
-    colunas = [coluna[1] for coluna in c.fetchall()]
-    
-    if 'taxa_entrega' not in colunas:
+    colunas_pedidos = [coluna[1] for coluna in c.fetchall()]
+    if 'taxa_entrega' not in colunas_pedidos:
         c.execute("ALTER TABLE pedidos ADD COLUMN taxa_entrega REAL DEFAULT 0.0")
-    if 'telefone' not in colunas:
+    if 'telefone' not in colunas_pedidos:
         c.execute("ALTER TABLE pedidos ADD COLUMN telefone TEXT DEFAULT ''")
         
+    # Nova Tabela: Cardápio
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS cardapio (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT,
+            preco REAL,
+            disponivel INTEGER,
+            imagem TEXT
+        )
+    ''')
+    
+    # Popula o cardápio inicial caso esteja vazio (primeiro uso)
+    c.execute("SELECT COUNT(*) FROM cardapio")
+    if c.fetchone()[0] == 0:
+        itens_iniciais = [
+            ("Marmita Executiva Tradicional", 22.00, 1, "https://images.unsplash.com/photo-1628296939923-d64e9a6e35cb?w=300&q=80"),
+            ("Prato Feito Especial", 28.00, 1, "https://images.unsplash.com/photo-1645696301019-35adcc18fc21?w=300&q=80"),
+            ("Suco Natural 500ml", 8.00, 1, "https://images.unsplash.com/photo-1622597467836-f38240662c8b?w=300&q=80")
+        ]
+        c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem) VALUES (?, ?, ?, ?)", itens_iniciais)
+
     conn.commit()
     conn.close()
 
+# --- Funções de Pedidos ---
 def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, taxa_entrega):
     conn = sqlite3.connect('bem_caseiro.db')
     c = conn.cursor()
     data_hora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     itens_json = json.dumps(itens)
-    
     c.execute('''
         INSERT INTO pedidos (data_hora, cliente, telefone, endereco, itens, total, pagamento, status, taxa_entrega)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (data_hora, cliente, telefone, endereco, itens_json, total, pagamento, 'Novo', taxa_entrega))
-    
     pedido_id = c.lastrowid
     conn.commit()
     conn.close()
@@ -87,6 +109,35 @@ def carregar_vendas_concluidas():
     conn.close()
     return df
 
+# --- Funções do Cardápio ---
+def carregar_cardapio_completo():
+    conn = sqlite3.connect('bem_caseiro.db')
+    # Retorna como um dicionário para o Python ler fácil
+    df = pd.read_sql_query("SELECT * FROM cardapio", conn)
+    conn.close()
+    return df.to_dict('records')
+
+def adicionar_prato(nome, preco, imagem):
+    conn = sqlite3.connect('bem_caseiro.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO cardapio (nome, preco, disponivel, imagem) VALUES (?, ?, 1, ?)", (nome, preco, imagem))
+    conn.commit()
+    conn.close()
+
+def atualizar_disponibilidade(prato_id, disponivel):
+    conn = sqlite3.connect('bem_caseiro.db')
+    c = conn.cursor()
+    c.execute("UPDATE cardapio SET disponivel = ? WHERE id = ?", (disponivel, prato_id))
+    conn.commit()
+    conn.close()
+
+def excluir_prato(prato_id):
+    conn = sqlite3.connect('bem_caseiro.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM cardapio WHERE id = ?", (prato_id,))
+    conn.commit()
+    conn.close()
+
 inicializar_banco()
 
 # ==========================================
@@ -94,27 +145,16 @@ inicializar_banco()
 # ==========================================
 st.set_page_config(page_title="Bem Caseiro Delivery", page_icon="🍲", layout="wide")
 
-if "cardapio" not in st.session_state:
-    st.session_state.cardapio = [
-        {"id": 1, "nome": "Marmita Executiva Tradicional", "preco": 22.00, "disponivel": True, "imagem": "https://images.unsplash.com/photo-1628296939923-d64e9a6e35cb?w=300&q=80"},
-        {"id": 2, "nome": "Prato Feito Especial", "preco": 28.00, "disponivel": True, "imagem": "https://images.unsplash.com/photo-1645696301019-35adcc18fc21?w=300&q=80"},
-        {"id": 3, "nome": "Suco Natural 500ml", "preco": 8.00, "disponivel": True, "imagem": "https://images.unsplash.com/photo-1622597467836-f38240662c8b?w=300&q=80"},
-    ]
-
-# Verifica na URL se o link contém o acesso de administrador
 is_admin = st.query_params.get("admin") == "sim"
 
 if is_admin:
-    # Mostra o menu completo para o dono do restaurante
     st.sidebar.title("🔒 Gestão Bem Caseiro")
     menu = st.sidebar.selectbox(
         "Navegação do Gestor", 
-        ["Painel da Cozinha / Gestão", "Relatório Financeiro", "Fazer Pedido (Cliente)"]
+        ["Painel da Cozinha / Gestão", "Gestão do Cardápio", "Relatório Financeiro", "Fazer Pedido (Cliente)"]
     )
 else:
-    # Se for o cliente comum, fixa na tela de pedido
     menu = "Fazer Pedido (Cliente)"
-    # Este código abaixo injeta um estilo que esconde o menu lateral por completo
     st.markdown(
         """
         <style>
@@ -135,8 +175,14 @@ if menu == "Fazer Pedido (Cliente)":
     carrinho = []
     total_itens = 0.0
 
-    for item in st.session_state.cardapio:
-        if item["disponivel"]:
+    # Puxa o cardápio direto do banco de dados agora
+    cardapio_banco = carregar_cardapio_completo()
+    itens_disponiveis = [item for item in cardapio_banco if item['disponivel'] == 1]
+    
+    if not itens_disponiveis:
+        st.warning("Nosso cardápio está sendo atualizado no momento. Volte em alguns minutos!")
+    else:
+        for item in itens_disponiveis:
             with st.container():
                 col_img, col_desc, col_qtd = st.columns([1, 3, 1])
                 with col_img:
@@ -146,74 +192,132 @@ if menu == "Fazer Pedido (Cliente)":
                     st.markdown(f"**{item['nome']}**")
                     st.markdown(f"R$ {item['preco']:.2f}")
                 with col_qtd:
-                    qtd = st.number_input("Quantidade", min_value=0, max_value=20, value=0, key=f"item_{item['id']}")
+                    qtd = st.number_input("Quantidade", min_value=0, max_value=20, value=0, key=f"item_cli_{item['id']}")
                     if qtd > 0:
                         subtotal = qtd * item["preco"]
                         carrinho.append({"nome": item["nome"], "qtd": qtd, "subtotal": subtotal})
                         total_itens += subtotal
             st.divider()
 
-    st.markdown(f"### Subtotal dos itens: R$ {total_itens:.2f}")
-    st.divider()
+        st.markdown(f"### Subtotal dos itens: R$ {total_itens:.2f}")
+        st.divider()
 
-    st.subheader("Dados para Entrega")
-    
-    col_nome, col_tel = st.columns(2)
-    with col_nome:
-        nome_cliente = st.text_input("Nome Completo")
-    with col_tel:
-        telefone_cliente = st.text_input("WhatsApp para Contato (Ex: 95 99999-9999)")
-    
-    col_bairro, col_rua = st.columns([1, 2])
-    with col_bairro:
-        bairro_selecionado = st.selectbox("Bairro", list(TAXAS_ENTREGA.keys()))
-        valor_frete = TAXAS_ENTREGA[bairro_selecionado]
-    with col_rua:
-        endereco_rua = st.text_input("Rua, Número e Ponto de Referência")
+        st.subheader("Dados para Entrega")
+        
+        col_nome, col_tel = st.columns(2)
+        with col_nome:
+            nome_cliente = st.text_input("Nome Completo")
+        with col_tel:
+            telefone_cliente = st.text_input("WhatsApp para Contato (Ex: 95 99999-9999)")
+        
+        col_bairro, col_rua = st.columns([1, 2])
+        with col_bairro:
+            bairro_selecionado = st.selectbox("Bairro", list(TAXAS_ENTREGA.keys()))
+            valor_frete = TAXAS_ENTREGA[bairro_selecionado]
+        with col_rua:
+            endereco_rua = st.text_input("Rua, Número e Ponto de Referência")
 
-    endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
-    total_geral = total_itens + valor_frete
+        endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
+        total_geral = total_itens + valor_frete
 
-    st.info(f"**Taxa de Entrega:** R$ {valor_frete:.2f} | **Total do Pedido:** R$ {total_geral:.2f}")
+        st.info(f"**Taxa de Entrega:** R$ {valor_frete:.2f} | **Total do Pedido:** R$ {total_geral:.2f}")
 
-    pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
-    troco = st.text_input("Troco para quanto? (Se for dinheiro)")
+        pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
+        troco = st.text_input("Troco para quanto? (Se for dinheiro)")
 
-    st.write("") 
-    enviar = st.button("Finalizar e Enviar para o WhatsApp", type="primary", use_container_width=True)
+        st.write("") 
+        enviar = st.button("Finalizar e Enviar para o WhatsApp", type="primary", use_container_width=True)
 
-    if enviar:
-        if nome_cliente and telefone_cliente and carrinho and (endereco_rua or bairro_selecionado == "Retirar no Local"):
-            pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
-            
-            pedido_id = salvar_novo_pedido(nome_cliente, telefone_cliente, endereco_completo, carrinho, total_geral, pagamento_formatado, valor_frete)
+        if enviar:
+            if nome_cliente and telefone_cliente and carrinho and (endereco_rua or bairro_selecionado == "Retirar no Local"):
+                pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
+                
+                pedido_id = salvar_novo_pedido(nome_cliente, telefone_cliente, endereco_completo, carrinho, total_geral, pagamento_formatado, valor_frete)
 
-            texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n"
-            texto_pedido += f"👤 *Cliente:* {nome_cliente}\n"
-            texto_pedido += f"📱 *Contato:* {telefone_cliente}\n"
-            texto_pedido += f"📍 *Endereço:* {endereco_completo}\n\n"
-            texto_pedido += "*Itens do Pedido:*\n"
-            for item in carrinho:
-                texto_pedido += f"- {item['qtd']}x {item['nome']} (R$ {item['subtotal']:.2f})\n"
-            
-            texto_pedido += f"\n📦 *Subtotal:* R$ {total_itens:.2f}"
-            texto_pedido += f"\n🛵 *Taxa de Entrega:* R$ {valor_frete:.2f}"
-            texto_pedido += f"\n💰 *Total Geral:* R$ {total_geral:.2f}\n"
-            texto_pedido += f"💳 *Pagamento:* {pagamento_formatado}"
+                texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n"
+                texto_pedido += f"👤 *Cliente:* {nome_cliente}\n"
+                texto_pedido += f"📱 *Contato:* {telefone_cliente}\n"
+                texto_pedido += f"📍 *Endereço:* {endereco_completo}\n\n"
+                texto_pedido += "*Itens do Pedido:*\n"
+                for item in carrinho:
+                    texto_pedido += f"- {item['qtd']}x {item['nome']} (R$ {item['subtotal']:.2f})\n"
+                
+                texto_pedido += f"\n📦 *Subtotal:* R$ {total_itens:.2f}"
+                texto_pedido += f"\n🛵 *Taxa de Entrega:* R$ {valor_frete:.2f}"
+                texto_pedido += f"\n💰 *Total Geral:* R$ {total_geral:.2f}\n"
+                texto_pedido += f"💳 *Pagamento:* {pagamento_formatado}"
 
-            texto_codificado = urllib.parse.quote(texto_pedido)
-            link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={texto_codificado}"
+                texto_codificado = urllib.parse.quote(texto_pedido)
+                link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={texto_codificado}"
 
-            st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
-            st.markdown(
-                f'<a href="{link_whatsapp}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 16px; border-radius: 5px;">📱 Enviar Pedido por WhatsApp</a>',
-                unsafe_allow_html=True
-            )
-        else:
-            st.error("Por favor, preencha o nome, telefone, adicione os itens e informe o endereço completo.")
+                st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
+                st.markdown(
+                    f'<a href="{link_whatsapp}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 16px; border-radius: 5px;">📱 Enviar Pedido por WhatsApp</a>',
+                    unsafe_allow_html=True
+                )
+            else:
+                st.error("Por favor, preencha o nome, telefone, adicione os itens e informe o endereço completo.")
 
 # ==========================================
-# 4. MÓDULO DA COZINHA (GESTÃO DE FILA)
+# 4. NOVA TELA: GESTÃO DO CARDÁPIO
+# ==========================================
+elif menu == "Gestão do Cardápio":
+    st.title("📝 Gestão do Cardápio")
+    st.write("Adicione novos pratos, ajuste preços ou marque um item como esgotado.")
+
+    with st.expander("➕ Cadastrar Novo Prato", expanded=False):
+        with st.form("form_novo_prato", clear_on_submit=True):
+            novo_nome = st.text_input("Nome do Prato/Bebida*")
+            novo_preco = st.number_input("Preço (R$)*", min_value=0.0, format="%.2f", step=1.0)
+            nova_imagem = st.text_input("Link da Imagem (Opcional)")
+            
+            submit_prato = st.form_submit_button("Salvar no Cardápio")
+            if submit_prato:
+                if novo_nome and novo_preco > 0:
+                    adicionar_prato(novo_nome, novo_preco, nova_imagem)
+                    st.success(f"'{novo_nome}' adicionado com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("Por favor, preencha o nome e o preço corretamente.")
+
+    st.divider()
+    st.subheader("Itens Cadastrados")
+    
+    cardapio_banco = carregar_cardapio_completo()
+    
+    if not cardapio_banco:
+        st.info("Nenhum item cadastrado no cardápio.")
+    else:
+        # Criação de um cabeçalho para a lista
+        col_nome, col_preco, col_disp, col_acao = st.columns([3, 1, 1, 1])
+        col_nome.markdown("**Produto**")
+        col_preco.markdown("**Preço**")
+        col_disp.markdown("**Disponível?**")
+        col_acao.markdown("**Excluir**")
+        
+        for item in cardapio_banco:
+            c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+            c1.write(item['nome'])
+            c2.write(f"R$ {item['preco']:.2f}")
+            
+            # Switch de Disponibilidade (Pausa/Esgotado)
+            is_ativo = bool(item['disponivel'])
+            toggle_ativo = c3.toggle("Sim", value=is_ativo, key=f"tgl_{item['id']}")
+            
+            # Se você clicar no botão e o valor mudar, atualiza o banco
+            if toggle_ativo != is_ativo:
+                atualizar_disponibilidade(item['id'], int(toggle_ativo))
+                st.rerun()
+                
+            # Botão de excluir
+            if c4.button("🗑️", key=f"del_{item['id']}"):
+                excluir_prato(item['id'])
+                st.rerun()
+            
+            st.markdown("---")
+
+# ==========================================
+# 5. MÓDULO DA COZINHA (GESTÃO DE FILA)
 # ==========================================
 elif menu == "Painel da Cozinha / Gestão":
     st.title("📋 Painel de Controle de Pedidos")
@@ -277,7 +381,7 @@ elif menu == "Painel da Cozinha / Gestão":
                     st.rerun()
 
 # ==========================================
-# 5. MÓDULO FINANCEIRO (RELATÓRIOS)
+# 6. MÓDULO FINANCEIRO (RELATÓRIOS)
 # ==========================================
 elif menu == "Relatório Financeiro":
     st.title("📊 Relatório Financeiro e Fechamento")
