@@ -4,7 +4,7 @@ import sqlite3
 import json
 import pandas as pd
 import streamlit as st
-import re  # Nova biblioteca para limpar formatação de telefone
+import re
 
 # ==========================================
 # 0. CONFIGURAÇÕES E DADOS DO RESTAURANTE
@@ -70,7 +70,6 @@ def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, tax
 
 def carregar_pedidos_ativos():
     conn = sqlite3.connect('bem_caseiro.db')
-    # Modificado para não mostrar pedidos Concluídos nem Cancelados
     df = pd.read_sql_query("SELECT * FROM pedidos WHERE status NOT IN ('Concluído', 'Cancelado')", conn)
     conn.close()
     return df
@@ -91,7 +90,7 @@ def carregar_vendas_concluidas():
 inicializar_banco()
 
 # ==========================================
-# 2. CONFIGURAÇÃO DA INTERFACE (STREAMLIT)
+# 2. CONFIGURAÇÃO E ROTEAMENTO (CLIENTE VS GESTOR)
 # ==========================================
 st.set_page_config(page_title="Bem Caseiro Delivery", page_icon="🍲", layout="wide")
 
@@ -102,10 +101,29 @@ if "cardapio" not in st.session_state:
         {"id": 3, "nome": "Suco Natural 500ml", "preco": 8.00, "disponivel": True, "imagem": "https://images.unsplash.com/photo-1622597467836-f38240662c8b?w=300&q=80"},
     ]
 
-menu = st.sidebar.selectbox(
-    "Navegação", 
-    ["Fazer Pedido (Cliente)", "Painel da Cozinha / Gestão", "Relatório Financeiro"]
-)
+# Verifica na URL se o link contém o acesso de administrador
+is_admin = st.query_params.get("admin") == "sim"
+
+if is_admin:
+    # Mostra o menu completo para o dono do restaurante
+    st.sidebar.title("🔒 Gestão Bem Caseiro")
+    menu = st.sidebar.selectbox(
+        "Navegação do Gestor", 
+        ["Painel da Cozinha / Gestão", "Relatório Financeiro", "Fazer Pedido (Cliente)"]
+    )
+else:
+    # Se for o cliente comum, fixa na tela de pedido
+    menu = "Fazer Pedido (Cliente)"
+    # Este código abaixo injeta um estilo que esconde o menu lateral por completo
+    st.markdown(
+        """
+        <style>
+            [data-testid="collapsedControl"] {display: none;}
+            [data-testid="stSidebar"] {display: none;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # ==========================================
 # 3. MÓDULO DO CLIENTE (CARDÁPIO)
@@ -226,11 +244,8 @@ elif menu == "Painel da Cozinha / Gestão":
 
                 st.divider()
                 
-                # --- NOVO: SEÇÃO DE MENSAGENS NO WHATSAPP ---
-                # Limpa o telefone para conter apenas números
                 telefone_limpo = re.sub(r'\D', '', telefone_exibicao)
                 if len(telefone_limpo) >= 10:
-                    # Adiciona o 55 (Brasil) se o cliente não tiver digitado
                     if not telefone_limpo.startswith('55'):
                         telefone_limpo = f"55{telefone_limpo}"
                     
@@ -244,9 +259,8 @@ elif menu == "Painel da Cozinha / Gestão":
                         <a href="https://wa.me/{telefone_limpo}?text={msg_producao}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #ff9800; color: white; border-radius: 5px; margin-right: 5px;">🔥 Avisar: Em Produção</a>
                         <a href="https://wa.me/{telefone_limpo}?text={msg_entrega}" target="_blank" style="font-size: 14px; text-decoration: none; padding: 5px 10px; background-color: #4CAF50; color: white; border-radius: 5px;">🛵 Avisar: Saiu para Entrega</a>
                     """, unsafe_allow_html=True)
-                    st.write("") # Espaço em branco
+                    st.write("") 
                 
-                # --- BOTÕES DE ALTERAÇÃO DE STATUS (SISTEMA INTERNO) ---
                 st.markdown("**Ações do Pedido (Sistema):**")
                 col1, col2, col3, col4 = st.columns(4)
                 if col1.button("Em Produção", key=f"prod_{row['id']}"):
