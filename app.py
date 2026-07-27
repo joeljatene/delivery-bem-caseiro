@@ -237,17 +237,20 @@ if menu == "Fazer Pedido (Cliente)":
                             with col_desc:
                                 st.markdown(f"**{item['nome']}**")
                                 st.markdown(f"R$ {float(item['preco']):.2f}")
+                                obs_alim = st.text_input("Observação (opcional):", placeholder="Ex: sem cebola, pouca farofa", key=f"obs_alim_{item['id']}")
                             with col_add:
                                 qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_{item['id']}")
-                                # BOTÃO ADICIONAR
                                 if st.button("➕ Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
-                                    chave_item = str(item['id'])
+                                    
+                                    nome_final = f"{item['nome']} [Obs: {obs_alim}]" if obs_alim else item['nome']
+                                    chave_item = f"{item['id']}_{obs_alim}"
+                                    
                                     if chave_item in st.session_state['carrinho']:
                                         st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
                                     else:
                                         st.session_state['carrinho'][chave_item] = {
                                             "id": item['id'],
-                                            "nome": item['nome'],
+                                            "nome": nome_final,
                                             "preco": float(item['preco']),
                                             "qtd": qtd_desejada
                                         }
@@ -273,19 +276,22 @@ if menu == "Fazer Pedido (Cliente)":
                                 elif "Refrigerante" in item['nome']:
                                     sabor = st.selectbox("Opção:", ["Coca-Cola", "Guaraná Antarctica", "Fanta Laranja", "Sprite", "Coca-Cola Zero"], key=f"sabor_{item['id']}")
                                 
+                                obs_beb = st.text_input("Observação (opcional):", placeholder="Ex: sem açúcar, com gelo", key=f"obs_beb_{item['id']}")
+                                
                             with col_add:
-                                qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_{item['id']}")
-                                # BOTÃO ADICIONAR (Com sabor embutido na chave)
-                                if st.button("➕ Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
+                                qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_beb_{item['id']}")
+                                if st.button("➕ Adicionar", key=f"btn_add_beb_{item['id']}", use_container_width=True):
+                                    
                                     nome_com_sabor = f"{item['nome']} ({sabor})" if sabor else item['nome']
-                                    chave_item = f"{item['id']}_{sabor}" if sabor else str(item['id'])
+                                    nome_final = f"{nome_com_sabor} [Obs: {obs_beb}]" if obs_beb else nome_com_sabor
+                                    chave_item = f"{item['id']}_{sabor}_{obs_beb}"
                                     
                                     if chave_item in st.session_state['carrinho']:
                                         st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
                                     else:
                                         st.session_state['carrinho'][chave_item] = {
                                             "id": item['id'],
-                                            "nome": nome_com_sabor,
+                                            "nome": nome_final,
                                             "preco": float(item['preco']),
                                             "qtd": qtd_desejada
                                         }
@@ -300,14 +306,12 @@ if menu == "Fazer Pedido (Cliente)":
                 total_itens = 0.0
                 carrinho_formatado_para_banco = []
 
-                # LISTAGEM DO CARRINHO (EDITAR E EXCLUIR)
                 chaves_carrinho = list(st.session_state['carrinho'].keys())
                 for chave in chaves_carrinho:
                     item_cart = st.session_state['carrinho'][chave]
                     subtotal = item_cart['qtd'] * item_cart['preco']
                     total_itens += subtotal
                     
-                    # Prepara a lista no formato que o banco de dados espera salvar depois
                     carrinho_formatado_para_banco.append({
                         "nome": item_cart['nome'],
                         "qtd": item_cart['qtd'],
@@ -319,14 +323,12 @@ if menu == "Fazer Pedido (Cliente)":
                         st.markdown(f"**{item_cart['nome']}**")
                         st.markdown(f"R$ {item_cart['preco']:.2f} cada — **Subtotal: R$ {subtotal:.2f}**")
                     with col_edit:
-                        # BOTÃO EDITAR (Altera a quantidade direto no carrinho)
                         nova_qtd = st.number_input("Editar Qtd", min_value=1, max_value=30, value=item_cart['qtd'], key=f"edit_qtd_{chave}")
                         if nova_qtd != item_cart['qtd']:
                             st.session_state['carrinho'][chave]['qtd'] = nova_qtd
                             st.rerun()
                     with col_del:
-                        st.write("") # Espaçamento para alinhar o botão
-                        # BOTÃO EXCLUIR
+                        st.write("") 
                         if st.button("🗑️ Excluir", key=f"del_cart_{chave}"):
                             del st.session_state['carrinho'][chave]
                             st.rerun()
@@ -404,7 +406,6 @@ if menu == "Fazer Pedido (Cliente)":
                             texto_codificado = urllib.parse.quote(texto_pedido)
                             link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={texto_codificado}"
                             
-                            # Limpa o carrinho da memória após confirmar a compra
                             st.session_state['carrinho'] = {}
 
                             st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
