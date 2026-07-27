@@ -608,7 +608,7 @@ elif menu == "Gestão de Motoboys":
             st.divider()
 
 # ==========================================
-# 6. CONFIGURAÇÕES DO SISTEMA (NOVO)
+# 6. CONFIGURAÇÕES DO SISTEMA
 # ==========================================
 elif menu == "Configurações":
     st.title("⚙️ Configurações do Sistema")
@@ -664,7 +664,32 @@ elif menu == "Painel da Cozinha / Gestão":
                 st.warning("🔔 **NOVO PEDIDO RECEBIDO!** (O alarme sonoro está desativado nas Configurações).")
 
         for index, row in df_pedidos.iterrows():
-            with st.expander(f"Pedido #{row['id']} — {row['cliente']} — Status: [{row['status']}]", expanded=True):
+            
+            # DEFINIÇÃO DE CORES E EMOJIS BASEADO NO STATUS
+            status_atual = row['status']
+            if status_atual == 'Novo':
+                cor_fundo = "#FF4B4B" # Vermelho
+                cor_texto = "white"
+                emoji = "🔴"
+            elif status_atual == 'Em Produção':
+                cor_fundo = "#FFA500" # Laranja
+                cor_texto = "black"
+                emoji = "🟡"
+            elif status_atual == 'Saiu para Entrega':
+                cor_fundo = "#00C853" # Verde
+                cor_texto = "white"
+                emoji = "🟢"
+            else:
+                cor_fundo = "#808080"
+                cor_texto = "white"
+                emoji = "⚪"
+                
+            titulo_expander = f"{emoji} Pedido #{row['id']} — {row['cliente']} — {status_atual.upper()}"
+            
+            with st.expander(titulo_expander, expanded=True):
+                # TARJA COLORIDA DE STATUS
+                st.markdown(f"<div style='background-color: {cor_fundo}; color: {cor_texto}; padding: 8px; border-radius: 5px; text-align: center; font-weight: bold; font-size: 16px; margin-bottom: 15px;'>STATUS: {status_atual.upper()}</div>", unsafe_allow_html=True)
+                
                 telefone_exibicao = row.get('telefone', '')
                 st.markdown(f"**WhatsApp:** {telefone_exibicao} | **Pagamento:** {row['pagamento']}")
                 st.markdown(f"**Endereço:** {row['endereco']}")
