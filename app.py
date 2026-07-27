@@ -26,6 +26,10 @@ TAXAS_ENTREGA = {
     "Cauamé": 12.00
 }
 
+# INICIALIZA O CARRINHO NA MEMÓRIA DO APLICATIVO
+if 'carrinho' not in st.session_state:
+    st.session_state['carrinho'] = {}
+
 # ==========================================
 # 1. FUNÇÕES DE BANCO DE DADOS (PostgreSQL)
 # ==========================================
@@ -212,9 +216,6 @@ if menu == "Fazer Pedido (Cliente)":
     st.title("🍽️ Bem Caseiro - Faça o seu Pedido")
     st.subheader("Nosso Cardápio:")
 
-    carrinho = []
-    total_itens = 0.0
-
     try:
         cardapio_banco = carregar_cardapio_completo()
         itens_disponiveis = [item for item in cardapio_banco if item['disponivel'] == 1]
@@ -224,30 +225,41 @@ if menu == "Fazer Pedido (Cliente)":
         else:
             aba_alimentos, aba_bebidas = st.tabs(["🍽️ Alimentos", "🥤 Bebidas"])
 
+            # ABA DE ALIMENTOS
             with aba_alimentos:
                 for item in itens_disponiveis:
                     if item.get("categoria", "Alimentos") != "Bebidas":
                         with st.container():
-                            col_img, col_desc, col_qtd = st.columns([1, 3, 1])
+                            col_img, col_desc, col_add = st.columns([1, 3, 1.5])
                             with col_img:
                                 if item.get("imagem"):
                                     st.image(item["imagem"], width="stretch") 
                             with col_desc:
                                 st.markdown(f"**{item['nome']}**")
                                 st.markdown(f"R$ {float(item['preco']):.2f}")
-                            with col_qtd:
-                                qtd = st.number_input("Quantidade", min_value=0, max_value=20, value=0, key=f"item_cli_{item['id']}")
-                                if qtd > 0:
-                                    subtotal = qtd * float(item['preco'])
-                                    carrinho.append({"nome": item["nome"], "qtd": qtd, "subtotal": subtotal})
-                                    total_itens += subtotal
+                            with col_add:
+                                qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_{item['id']}")
+                                # BOTÃO ADICIONAR
+                                if st.button("➕ Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
+                                    chave_item = str(item['id'])
+                                    if chave_item in st.session_state['carrinho']:
+                                        st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
+                                    else:
+                                        st.session_state['carrinho'][chave_item] = {
+                                            "id": item['id'],
+                                            "nome": item['nome'],
+                                            "preco": float(item['preco']),
+                                            "qtd": qtd_desejada
+                                        }
+                                    st.toast(f"{qtd_desejada}x {item['nome']} adicionado ao carrinho!", icon="✅")
                         st.divider()
 
+            # ABA DE BEBIDAS
             with aba_bebidas:
                 for item in itens_disponiveis:
                     if item.get("categoria") == "Bebidas":
                         with st.container():
-                            col_img, col_desc, col_qtd = st.columns([1, 3, 1])
+                            col_img, col_desc, col_add = st.columns([1, 3, 1.5])
                             with col_img:
                                 if item.get("imagem"):
                                     st.image(item["imagem"], width="stretch") 
@@ -261,28 +273,69 @@ if menu == "Fazer Pedido (Cliente)":
                                 elif "Refrigerante" in item['nome']:
                                     sabor = st.selectbox("Opção:", ["Coca-Cola", "Guaraná Antarctica", "Fanta Laranja", "Sprite", "Coca-Cola Zero"], key=f"sabor_{item['id']}")
                                 
-                            with col_qtd:
-                                qtd = st.number_input("Quantidade", min_value=0, max_value=20, value=0, key=f"item_cli_{item['id']}")
-                                if qtd > 0:
-                                    subtotal = qtd * float(item['preco'])
-                                    nome_final = f"{item['nome']} ({sabor})" if sabor else item['nome']
-                                    carrinho.append({"nome": nome_final, "qtd": qtd, "subtotal": subtotal})
-                                    total_itens += subtotal
+                            with col_add:
+                                qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_{item['id']}")
+                                # BOTÃO ADICIONAR (Com sabor embutido na chave)
+                                if st.button("➕ Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
+                                    nome_com_sabor = f"{item['nome']} ({sabor})" if sabor else item['nome']
+                                    chave_item = f"{item['id']}_{sabor}" if sabor else str(item['id'])
+                                    
+                                    if chave_item in st.session_state['carrinho']:
+                                        st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
+                                    else:
+                                        st.session_state['carrinho'][chave_item] = {
+                                            "id": item['id'],
+                                            "nome": nome_com_sabor,
+                                            "preco": float(item['preco']),
+                                            "qtd": qtd_desejada
+                                        }
+                                    st.toast(f"{qtd_desejada}x {nome_com_sabor} adicionado ao carrinho!", icon="✅")
                         st.divider()
 
-            # LÓGICA DE CONFERÊNCIA DO PEDIDO (Só aparece se houver itens no carrinho)
-            if len(carrinho) > 0:
+            # LÓGICA DE CONFERÊNCIA DO PEDIDO (Carrinho)
+            if len(st.session_state['carrinho']) > 0:
                 st.subheader("🛒 Resumo e Conferência do Pedido")
-                st.info("Confira os itens abaixo antes de prosseguir com os dados de entrega.")
+                st.info("Você pode editar as quantidades ou remover itens antes de prosseguir.")
                 
-                # Exibe a lista formatada do que foi escolhido
-                for item in carrinho:
-                    st.markdown(f"🔸 **{item['qtd']}x** {item['nome']} — **R$ {item['subtotal']:.2f}**")
-                
+                total_itens = 0.0
+                carrinho_formatado_para_banco = []
+
+                # LISTAGEM DO CARRINHO (EDITAR E EXCLUIR)
+                chaves_carrinho = list(st.session_state['carrinho'].keys())
+                for chave in chaves_carrinho:
+                    item_cart = st.session_state['carrinho'][chave]
+                    subtotal = item_cart['qtd'] * item_cart['preco']
+                    total_itens += subtotal
+                    
+                    # Prepara a lista no formato que o banco de dados espera salvar depois
+                    carrinho_formatado_para_banco.append({
+                        "nome": item_cart['nome'],
+                        "qtd": item_cart['qtd'],
+                        "subtotal": subtotal
+                    })
+
+                    col_nome, col_edit, col_del = st.columns([3, 1.5, 1])
+                    with col_nome:
+                        st.markdown(f"**{item_cart['nome']}**")
+                        st.markdown(f"R$ {item_cart['preco']:.2f} cada — **Subtotal: R$ {subtotal:.2f}**")
+                    with col_edit:
+                        # BOTÃO EDITAR (Altera a quantidade direto no carrinho)
+                        nova_qtd = st.number_input("Editar Qtd", min_value=1, max_value=30, value=item_cart['qtd'], key=f"edit_qtd_{chave}")
+                        if nova_qtd != item_cart['qtd']:
+                            st.session_state['carrinho'][chave]['qtd'] = nova_qtd
+                            st.rerun()
+                    with col_del:
+                        st.write("") # Espaçamento para alinhar o botão
+                        # BOTÃO EXCLUIR
+                        if st.button("🗑️ Excluir", key=f"del_cart_{chave}"):
+                            del st.session_state['carrinho'][chave]
+                            st.rerun()
+                            
+                st.write("---")
                 st.markdown(f"### 💰 Subtotal dos itens: R$ {total_itens:.2f}")
                 st.write("---")
 
-                # Abre o formulário de entrega logo abaixo da conferência
+                # FORMULÁRIO DE ENTREGA
                 st.subheader("🛵 Dados para Entrega")
                 
                 telefone_input = st.text_input("Seu WhatsApp (Digite apenas números e clique fora)", placeholder="Ex: 95999999999")
@@ -321,10 +374,10 @@ if menu == "Fazer Pedido (Cliente)":
                     troco = st.text_input("Troco para quanto? (Se for dinheiro)")
 
                     st.write("") 
-                    enviar = st.form_submit_button("Confirmar Pedido e Enviar para o WhatsApp", type="primary", width="stretch")
+                    enviar = st.form_submit_button("Confirmar Pedido e Enviar para o WhatsApp", type="primary", use_container_width=True)
 
                     if enviar:
-                        if telefone_limpo and nome_cliente and carrinho and (endereco_rua or bairro_selecionado == "Retirar no Local"):
+                        if telefone_limpo and nome_cliente and carrinho_formatado_para_banco and (endereco_rua or bairro_selecionado == "Retirar no Local"):
                             
                             valor_frete = TAXAS_ENTREGA[bairro_selecionado]
                             endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
@@ -333,14 +386,14 @@ if menu == "Fazer Pedido (Cliente)":
                             pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
                             
                             salvar_cliente(telefone_limpo, nome_cliente, bairro_selecionado, endereco_rua)
-                            pedido_id = salvar_novo_pedido(nome_cliente, telefone_limpo, endereco_completo, carrinho, total_geral, pagamento_formatado, valor_frete)
+                            pedido_id = salvar_novo_pedido(nome_cliente, telefone_limpo, endereco_completo, carrinho_formatado_para_banco, total_geral, pagamento_formatado, valor_frete)
 
                             texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n"
                             texto_pedido += f"👤 *Cliente:* {nome_cliente}\n"
                             texto_pedido += f"📱 *Contato:* {telefone_limpo}\n"
                             texto_pedido += f"📍 *Endereço:* {endereco_completo}\n\n"
                             texto_pedido += "*Itens do Pedido:*\n"
-                            for item in carrinho:
+                            for item in carrinho_formatado_para_banco:
                                 texto_pedido += f"- {item['qtd']}x {item['nome']} (R$ {item['subtotal']:.2f})\n"
                             
                             texto_pedido += f"\n📦 *Subtotal:* R$ {total_itens:.2f}"
@@ -350,6 +403,9 @@ if menu == "Fazer Pedido (Cliente)":
 
                             texto_codificado = urllib.parse.quote(texto_pedido)
                             link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={texto_codificado}"
+                            
+                            # Limpa o carrinho da memória após confirmar a compra
+                            st.session_state['carrinho'] = {}
 
                             st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
                             st.markdown(
@@ -357,9 +413,9 @@ if menu == "Fazer Pedido (Cliente)":
                                 unsafe_allow_html=True
                             )
                         else:
-                            st.error("Por favor, informe seu WhatsApp, Nome, adicione os itens e informe o endereço.")
+                            st.error("Por favor, informe seu WhatsApp, Nome, e informe o endereço.")
             else:
-                st.info("👆 Selecione as quantidades no cardápio acima para iniciar o seu pedido.")
+                st.info("👆 Selecione os itens no cardápio acima e clique em 'Adicionar' para iniciar o seu pedido.")
 
     except Exception as e:
         st.error(f"Erro ao carregar cardápio. O banco de dados não está respondendo corretamente: {e}")
