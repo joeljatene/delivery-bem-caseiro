@@ -1,6 +1,6 @@
 import datetime
 import urllib.parse
-import psycopg2 # Novo driver para o banco em nuvem
+import psycopg2 
 import json
 import pandas as pd
 import streamlit as st
@@ -30,8 +30,9 @@ TAXAS_ENTREGA = {
 # 1. FUNÇÕES DE BANCO DE DADOS (PostgreSQL)
 # ==========================================
 def get_conexao():
-    # Puxa o link seguro do cofre do Streamlit
-    return psycopg2.connect(st.secrets["DATABASE_URL"])
+    # Puxa o link seguro exatamente como configuramos no arquivo secrets.toml
+    db_url = st.secrets["connections"]["supabase"]["url"]
+    return psycopg2.connect(db_url)
 
 def inicializar_banco():
     conn = get_conexao()
@@ -71,7 +72,6 @@ def inicializar_banco():
             ("Prato Feito Especial", 28.00, 1, "https://images.unsplash.com/photo-1645696301019-35adcc18fc21?w=300&q=80"),
             ("Suco Natural 500ml", 8.00, 1, "https://images.unsplash.com/photo-1622597467836-f38240662c8b?w=300&q=80")
         ]
-        # No Postgres, os parâmetros usam %s em vez de ?
         c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem) VALUES (%s, %s, %s, %s)", itens_iniciais)
 
     c.execute('''
@@ -113,7 +113,6 @@ def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, tax
     data_hora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     itens_json = json.dumps(itens)
     
-    # O Postgres exige a cláusula RETURNING id para devolver o número do pedido recém-criado
     c.execute('''
         INSERT INTO pedidos (data_hora, cliente, telefone, endereco, itens, total, pagamento, status, taxa_entrega)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
@@ -180,7 +179,7 @@ def editar_prato(prato_id, nome, preco, imagem):
 try:
     inicializar_banco()
 except Exception as e:
-    st.error(f"Erro de conexão com o banco de dados: {e}")
+    st.error(f"Erro de conexão com o banco de dados Supabase: {e}")
 
 # ==========================================
 # 2. CONFIGURAÇÃO E ROTEAMENTO
@@ -217,107 +216,110 @@ if menu == "Fazer Pedido (Cliente)":
     carrinho = []
     total_itens = 0.0
 
-    cardapio_banco = carregar_cardapio_completo()
-    itens_disponiveis = [item for item in cardapio_banco if item['disponivel'] == 1]
-    
-    if not itens_disponiveis:
-        st.warning("Nosso cardápio está sendo atualizado no momento. Volte em alguns minutos!")
-    else:
-        for item in itens_disponiveis:
-            with st.container():
-                col_img, col_desc, col_qtd = st.columns([1, 3, 1])
-                with col_img:
-                    if item.get("imagem"):
-                        st.image(item["imagem"], use_container_width=True)
-                with col_desc:
-                    st.markdown(f"**{item['nome']}**")
-                    st.markdown(f"R$ {float(item['preco']):.2f}")
-                with col_qtd:
-                    qtd = st.number_input("Quantidade", min_value=0, max_value=20, value=0, key=f"item_cli_{item['id']}")
-                    if qtd > 0:
-                        subtotal = qtd * float(item['preco'])
-                        carrinho.append({"nome": item["nome"], "qtd": qtd, "subtotal": subtotal})
-                        total_itens += subtotal
+    try:
+        cardapio_banco = carregar_cardapio_completo()
+        itens_disponiveis = [item for item in cardapio_banco if item['disponivel'] == 1]
+        
+        if not itens_disponiveis:
+            st.warning("Nosso cardápio está sendo atualizado no momento. Volte em alguns minutos!")
+        else:
+            for item in itens_disponiveis:
+                with st.container():
+                    col_img, col_desc, col_qtd = st.columns([1, 3, 1])
+                    with col_img:
+                        if item.get("imagem"):
+                            st.image(item["imagem"], use_container_width=True)
+                    with col_desc:
+                        st.markdown(f"**{item['nome']}**")
+                        st.markdown(f"R$ {float(item['preco']):.2f}")
+                    with col_qtd:
+                        qtd = st.number_input("Quantidade", min_value=0, max_value=20, value=0, key=f"item_cli_{item['id']}")
+                        if qtd > 0:
+                            subtotal = qtd * float(item['preco'])
+                            carrinho.append({"nome": item["nome"], "qtd": qtd, "subtotal": subtotal})
+                            total_itens += subtotal
+                st.divider()
+
+            st.markdown(f"### Subtotal dos itens: R$ {total_itens:.2f}")
             st.divider()
 
-        st.markdown(f"### Subtotal dos itens: R$ {total_itens:.2f}")
-        st.divider()
-
-        st.subheader("Dados para Entrega")
-        
-        telefone_input = st.text_input("Seu WhatsApp (Digite apenas números e clique fora)", placeholder="Ex: 95999999999")
-        
-        cli_nome = ""
-        cli_bairro = "Centro"
-        cli_rua = ""
-        telefone_limpo = ""
-
-        if telefone_input:
-            telefone_limpo = re.sub(r'\D', '', telefone_input)
-            if len(telefone_limpo) >= 10:
-                cliente_dados = buscar_cliente(telefone_limpo)
-                if cliente_dados:
-                    st.success("👋 Encontramos seu cadastro! Preenchemos seus dados para adiantar.")
-                    cli_nome = cliente_dados[0]
-                    cli_bairro = cliente_dados[1] if cliente_dados[1] in TAXAS_ENTREGA else "Centro"
-                    cli_rua = cliente_dados[2]
-                else:
-                    st.info("Primeira vez por aqui? Preencha os dados abaixo que já deixaremos salvo para a próxima.")
-            else:
-                st.warning("Digite o telefone completo com o DDD.")
-
-        with st.form("form_cliente"):
-            nome_cliente = st.text_input("Nome Completo", value=cli_nome)
+            st.subheader("Dados para Entrega")
             
-            col_bairro, col_rua = st.columns([1, 2])
-            with col_bairro:
-                idx_bairro = list(TAXAS_ENTREGA.keys()).index(cli_bairro) if cli_bairro in TAXAS_ENTREGA else 0
-                bairro_selecionado = st.selectbox("Bairro", list(TAXAS_ENTREGA.keys()), index=idx_bairro)
-                
-            with col_rua:
-                endereco_rua = st.text_input("Rua, Número e Ponto de Referência", value=cli_rua)
+            telefone_input = st.text_input("Seu WhatsApp (Digite apenas números e clique fora)", placeholder="Ex: 95999999999")
+            
+            cli_nome = ""
+            cli_bairro = "Centro"
+            cli_rua = ""
+            telefone_limpo = ""
 
-            pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
-            troco = st.text_input("Troco para quanto? (Se for dinheiro)")
-
-            st.write("") 
-            enviar = st.form_submit_button("Finalizar e Enviar para o WhatsApp", type="primary", use_container_width=True)
-
-            if enviar:
-                if telefone_limpo and nome_cliente and carrinho and (endereco_rua or bairro_selecionado == "Retirar no Local"):
-                    
-                    valor_frete = TAXAS_ENTREGA[bairro_selecionado]
-                    endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
-                    total_geral = total_itens + valor_frete
-                    
-                    pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
-                    
-                    salvar_cliente(telefone_limpo, nome_cliente, bairro_selecionado, endereco_rua)
-                    pedido_id = salvar_novo_pedido(nome_cliente, telefone_limpo, endereco_completo, carrinho, total_geral, pagamento_formatado, valor_frete)
-
-                    texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n"
-                    texto_pedido += f"👤 *Cliente:* {nome_cliente}\n"
-                    texto_pedido += f"📱 *Contato:* {telefone_limpo}\n"
-                    texto_pedido += f"📍 *Endereço:* {endereco_completo}\n\n"
-                    texto_pedido += "*Itens do Pedido:*\n"
-                    for item in carrinho:
-                        texto_pedido += f"- {item['qtd']}x {item['nome']} (R$ {item['subtotal']:.2f})\n"
-                    
-                    texto_pedido += f"\n📦 *Subtotal:* R$ {total_itens:.2f}"
-                    texto_pedido += f"\n🛵 *Taxa de Entrega:* R$ {valor_frete:.2f}"
-                    texto_pedido += f"\n💰 *Total Geral:* R$ {total_geral:.2f}\n"
-                    texto_pedido += f"💳 *Pagamento:* {pagamento_formatado}"
-
-                    texto_codificado = urllib.parse.quote(texto_pedido)
-                    link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={texto_codificado}"
-
-                    st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
-                    st.markdown(
-                        f'<a href="{link_whatsapp}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 16px; border-radius: 5px;">📱 Enviar Pedido por WhatsApp</a>',
-                        unsafe_allow_html=True
-                    )
+            if telefone_input:
+                telefone_limpo = re.sub(r'\D', '', telefone_input)
+                if len(telefone_limpo) >= 10:
+                    cliente_dados = buscar_cliente(telefone_limpo)
+                    if cliente_dados:
+                        st.success("👋 Encontramos seu cadastro! Preenchemos seus dados para adiantar.")
+                        cli_nome = cliente_dados[0]
+                        cli_bairro = cliente_dados[1] if cliente_dados[1] in TAXAS_ENTREGA else "Centro"
+                        cli_rua = cliente_dados[2]
+                    else:
+                        st.info("Primeira vez por aqui? Preencha os dados abaixo que já deixaremos salvo para a próxima.")
                 else:
-                    st.error("Por favor, informe seu WhatsApp, Nome, adicione os itens e informe o endereço.")
+                    st.warning("Digite o telefone completo com o DDD.")
+
+            with st.form("form_cliente"):
+                nome_cliente = st.text_input("Nome Completo", value=cli_nome)
+                
+                col_bairro, col_rua = st.columns([1, 2])
+                with col_bairro:
+                    idx_bairro = list(TAXAS_ENTREGA.keys()).index(cli_bairro) if cli_bairro in TAXAS_ENTREGA else 0
+                    bairro_selecionado = st.selectbox("Bairro", list(TAXAS_ENTREGA.keys()), index=idx_bairro)
+                    
+                with col_rua:
+                    endereco_rua = st.text_input("Rua, Número e Ponto de Referência", value=cli_rua)
+
+                pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
+                troco = st.text_input("Troco para quanto? (Se for dinheiro)")
+
+                st.write("") 
+                enviar = st.form_submit_button("Finalizar e Enviar para o WhatsApp", type="primary", use_container_width=True)
+
+                if enviar:
+                    if telefone_limpo and nome_cliente and carrinho and (endereco_rua or bairro_selecionado == "Retirar no Local"):
+                        
+                        valor_frete = TAXAS_ENTREGA[bairro_selecionado]
+                        endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
+                        total_geral = total_itens + valor_frete
+                        
+                        pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
+                        
+                        salvar_cliente(telefone_limpo, nome_cliente, bairro_selecionado, endereco_rua)
+                        pedido_id = salvar_novo_pedido(nome_cliente, telefone_limpo, endereco_completo, carrinho, total_geral, pagamento_formatado, valor_frete)
+
+                        texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n"
+                        texto_pedido += f"👤 *Cliente:* {nome_cliente}\n"
+                        texto_pedido += f"📱 *Contato:* {telefone_limpo}\n"
+                        texto_pedido += f"📍 *Endereço:* {endereco_completo}\n\n"
+                        texto_pedido += "*Itens do Pedido:*\n"
+                        for item in carrinho:
+                            texto_pedido += f"- {item['qtd']}x {item['nome']} (R$ {item['subtotal']:.2f})\n"
+                        
+                        texto_pedido += f"\n📦 *Subtotal:* R$ {total_itens:.2f}"
+                        texto_pedido += f"\n🛵 *Taxa de Entrega:* R$ {valor_frete:.2f}"
+                        texto_pedido += f"\n💰 *Total Geral:* R$ {total_geral:.2f}\n"
+                        texto_pedido += f"💳 *Pagamento:* {pagamento_formatado}"
+
+                        texto_codificado = urllib.parse.quote(texto_pedido)
+                        link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={texto_codificado}"
+
+                        st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
+                        st.markdown(
+                            f'<a href="{link_whatsapp}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 16px; border-radius: 5px;">📱 Enviar Pedido por WhatsApp</a>',
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        st.error("Por favor, informe seu WhatsApp, Nome, adicione os itens e informe o endereço.")
+    except Exception as e:
+        st.error(f"Erro ao carregar cardápio. O banco de dados não está respondendo corretamente: {e}")
 
 # ==========================================
 # 4. GESTÃO DO CARDÁPIO (COM EDIÇÃO)
