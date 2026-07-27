@@ -30,7 +30,6 @@ TAXAS_ENTREGA = {
 # 1. FUNÇÕES DE BANCO DE DADOS (PostgreSQL)
 # ==========================================
 def get_conexao():
-    # Puxa o link seguro exatamente como configuramos no arquivo secrets.toml
     db_url = st.secrets["connections"]["supabase"]["url"]
     return psycopg2.connect(db_url)
 
@@ -38,7 +37,6 @@ def inicializar_banco():
     conn = get_conexao()
     c = conn.cursor()
     
-    # Criação das Tabelas no padrão PostgreSQL
     c.execute('''
         CREATE TABLE IF NOT EXISTS pedidos (
             id SERIAL PRIMARY KEY,
@@ -54,25 +52,26 @@ def inicializar_banco():
         )
     ''')
     
+    # Atualizado com a coluna categoria
     c.execute('''
         CREATE TABLE IF NOT EXISTS cardapio (
             id SERIAL PRIMARY KEY,
             nome TEXT,
             preco NUMERIC,
             disponivel INTEGER,
-            imagem TEXT
+            imagem TEXT,
+            categoria TEXT DEFAULT 'Alimentos'
         )
     ''')
     
-    # Popula cardápio inicial se estiver vazio
     c.execute("SELECT COUNT(*) FROM cardapio")
     if c.fetchone()[0] == 0:
         itens_iniciais = [
-            ("Marmita Executiva Tradicional", 22.00, 1, "https://images.unsplash.com/photo-1628296939923-d64e9a6e35cb?w=300&q=80"),
-            ("Prato Feito Especial", 28.00, 1, "https://images.unsplash.com/photo-1645696301019-35adcc18fc21?w=300&q=80"),
-            ("Suco Natural 500ml", 8.00, 1, "https://images.unsplash.com/photo-1622597467836-f38240662c8b?w=300&q=80")
+            ("Marmita Executiva Tradicional", 22.00, 1, "https://images.unsplash.com/photo-1628296939923-d64e9a6e35cb?w=300&q=80", "Alimentos"),
+            ("Prato Feito Especial", 28.00, 1, "https://images.unsplash.com/photo-1645696301019-35adcc18fc21?w=300&q=80", "Alimentos"),
+            ("Suco Natural 500ml", 8.00, 1, "https://images.unsplash.com/photo-1622597467836-f38240662c8b?w=300&q=80", "Bebidas")
         ]
-        c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem) VALUES (%s, %s, %s, %s)", itens_iniciais)
+        c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria) VALUES (%s, %s, %s, %s, %s)", itens_iniciais)
 
     c.execute('''
         CREATE TABLE IF NOT EXISTS clientes (
@@ -86,7 +85,6 @@ def inicializar_banco():
     conn.commit()
     conn.close()
 
-# --- Funções de Clientes ---
 def buscar_cliente(telefone):
     conn = get_conexao()
     c = conn.cursor()
@@ -106,7 +104,6 @@ def salvar_cliente(telefone, nome, bairro, endereco_rua):
     conn.commit()
     conn.close()
 
-# --- Funções de Pedidos e Cardápio ---
 def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, taxa_entrega):
     conn = get_conexao()
     c = conn.cursor()
@@ -144,14 +141,18 @@ def carregar_vendas_concluidas():
 
 def carregar_cardapio_completo():
     conn = get_conexao()
-    df = pd.read_sql_query("SELECT * FROM cardapio ORDER BY disponivel DESC, id ASC", conn)
+    # Puxa o cardápio e garante que não dê erro caso a coluna categoria não exista
+    try:
+        df = pd.read_sql_query("SELECT id, nome, preco, disponivel, imagem, categoria FROM cardapio ORDER BY disponivel DESC, id ASC", conn)
+    except:
+        df = pd.read_sql_query("SELECT *, 'Alimentos' as categoria FROM cardapio ORDER BY disponivel DESC, id ASC", conn)
     conn.close()
     return df.to_dict('records')
 
-def adicionar_prato(nome, preco, imagem):
+def adicionar_prato(nome, preco, imagem, categoria):
     conn = get_conexao()
     c = conn.cursor()
-    c.execute("INSERT INTO cardapio (nome, preco, disponivel, imagem) VALUES (%s, %s, 1, %s)", (nome, preco, imagem))
+    c.execute("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria) VALUES (%s, %s, 1, %s, %s)", (nome, preco, imagem, categoria))
     conn.commit()
     conn.close()
 
@@ -169,10 +170,10 @@ def excluir_prato(prato_id):
     conn.commit()
     conn.close()
 
-def editar_prato(prato_id, nome, preco, imagem):
+def editar_prato(prato_id, nome, preco, imagem, categoria):
     conn = get_conexao()
     c = conn.cursor()
-    c.execute("UPDATE cardapio SET nome = %s, preco = %s, imagem = %s WHERE id = %s", (nome, preco, imagem, prato_id))
+    c.execute("UPDATE cardapio SET nome = %s, preco = %s, imagem = %s, categoria = %s WHERE id = %s", (nome, preco, imagem, categoria, prato_id))
     conn.commit()
     conn.close()
 
@@ -223,22 +224,55 @@ if menu == "Fazer Pedido (Cliente)":
         if not itens_disponiveis:
             st.warning("Nosso cardápio está sendo atualizado no momento. Volte em alguns minutos!")
         else:
-            for item in itens_disponiveis:
-                with st.container():
-                    col_img, col_desc, col_qtd = st.columns([1, 3, 1])
-                    with col_img:
-                        if item.get("imagem"):
-                            st.image(item["imagem"], use_container_width=True)
-                    with col_desc:
-                        st.markdown(f"**{item['nome']}**")
-                        st.markdown(f"R$ {float(item['preco']):.2f}")
-                    with col_qtd:
-                        qtd = st.number_input("Quantidade", min_value=0, max_value=20, value=0, key=f"item_cli_{item['id']}")
-                        if qtd > 0:
-                            subtotal = qtd * float(item['preco'])
-                            carrinho.append({"nome": item["nome"], "qtd": qtd, "subtotal": subtotal})
-                            total_itens += subtotal
-                st.divider()
+            # CRIANDO AS ABAS
+            aba_alimentos, aba_bebidas = st.tabs(["🍽️ Alimentos", "🥤 Bebidas"])
+
+            with aba_alimentos:
+                for item in itens_disponiveis:
+                    if item.get("categoria", "Alimentos") != "Bebidas":
+                        with st.container():
+                            col_img, col_desc, col_qtd = st.columns([1, 3, 1])
+                            with col_img:
+                                if item.get("imagem"):
+                                    st.image(item["imagem"], width="stretch") # Corrigido warning
+                            with col_desc:
+                                st.markdown(f"**{item['nome']}**")
+                                st.markdown(f"R$ {float(item['preco']):.2f}")
+                            with col_qtd:
+                                qtd = st.number_input("Quantidade", min_value=0, max_value=20, value=0, key=f"item_cli_{item['id']}")
+                                if qtd > 0:
+                                    subtotal = qtd * float(item['preco'])
+                                    carrinho.append({"nome": item["nome"], "qtd": qtd, "subtotal": subtotal})
+                                    total_itens += subtotal
+                        st.divider()
+
+            with aba_bebidas:
+                for item in itens_disponiveis:
+                    if item.get("categoria") == "Bebidas":
+                        with st.container():
+                            col_img, col_desc, col_qtd = st.columns([1, 3, 1])
+                            with col_img:
+                                if item.get("imagem"):
+                                    st.image(item["imagem"], width="stretch") # Corrigido warning
+                            with col_desc:
+                                st.markdown(f"**{item['nome']}**")
+                                st.markdown(f"R$ {float(item['preco']):.2f}")
+                                
+                                # Lógica para escolha de sabores
+                                sabor = ""
+                                if "Suco" in item['nome']:
+                                    sabor = st.selectbox("Sabor:", ["Laranja", "Limão", "Maracujá", "Goiaba", "Cupuaçu"], key=f"sabor_{item['id']}")
+                                elif "Refrigerante" in item['nome']:
+                                    sabor = st.selectbox("Opção:", ["Coca-Cola", "Guaraná Antarctica", "Fanta Laranja", "Sprite", "Coca-Cola Zero"], key=f"sabor_{item['id']}")
+                                
+                            with col_qtd:
+                                qtd = st.number_input("Quantidade", min_value=0, max_value=20, value=0, key=f"item_cli_{item['id']}")
+                                if qtd > 0:
+                                    subtotal = qtd * float(item['preco'])
+                                    nome_final = f"{item['nome']} ({sabor})" if sabor else item['nome']
+                                    carrinho.append({"nome": nome_final, "qtd": qtd, "subtotal": subtotal})
+                                    total_itens += subtotal
+                        st.divider()
 
             st.markdown(f"### Subtotal dos itens: R$ {total_itens:.2f}")
             st.divider()
@@ -281,7 +315,7 @@ if menu == "Fazer Pedido (Cliente)":
                 troco = st.text_input("Troco para quanto? (Se for dinheiro)")
 
                 st.write("") 
-                enviar = st.form_submit_button("Finalizar e Enviar para o WhatsApp", type="primary", use_container_width=True)
+                enviar = st.form_submit_button("Finalizar e Enviar para o WhatsApp", type="primary", width="stretch") # Corrigido warning
 
                 if enviar:
                     if telefone_limpo and nome_cliente and carrinho and (endereco_rua or bairro_selecionado == "Retirar no Local"):
@@ -327,15 +361,16 @@ if menu == "Fazer Pedido (Cliente)":
 elif menu == "Gestão do Cardápio":
     st.title("📝 Gestão do Cardápio")
 
-    with st.expander("➕ Cadastrar Novo Prato", expanded=False):
+    with st.expander("➕ Cadastrar Novo Item", expanded=False):
         with st.form("form_novo_prato", clear_on_submit=True):
             novo_nome = st.text_input("Nome do Prato/Bebida*")
             novo_preco = st.number_input("Preço (R$)*", min_value=0.0, format="%.2f", step=1.0)
+            nova_categoria = st.selectbox("Categoria", ["Alimentos", "Bebidas"])
             nova_imagem = st.text_input("Link da Imagem (Opcional)")
             
             if st.form_submit_button("Salvar no Cardápio"):
                 if novo_nome and novo_preco > 0:
-                    adicionar_prato(novo_nome, novo_preco, nova_imagem)
+                    adicionar_prato(novo_nome, novo_preco, nova_imagem, nova_categoria)
                     st.success(f"'{novo_nome}' adicionado!")
                     st.rerun()
                 else:
@@ -352,11 +387,11 @@ elif menu == "Gestão do Cardápio":
         for item in cardapio_banco:
             with st.container():
                 c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
-                c1.write(f"**{item['nome']}**")
+                c1.write(f"**{item['nome']}** ({item.get('categoria', 'Alimentos')})")
                 c2.write(f"R$ {float(item['preco']):.2f}")
                 
                 is_ativo = bool(item['disponivel'])
-                toggle_ativo = c3.toggle("Sim", value=is_ativo, key=f"tgl_{item['id']}")
+                toggle_ativo = c3.toggle("Ativo", value=is_ativo, key=f"tgl_{item['id']}")
                 if toggle_ativo != is_ativo:
                     atualizar_disponibilidade(item['id'], int(toggle_ativo))
                     st.rerun()
@@ -369,17 +404,23 @@ elif menu == "Gestão do Cardápio":
                     with st.form(f"form_edit_{item['id']}"):
                         edit_nome = st.text_input("Nome", value=item['nome'])
                         edit_preco = st.number_input("Preço (R$)", min_value=0.0, value=float(item['preco']), format="%.2f", step=1.0)
+                        
+                        # Define o index correto do selectbox na edição
+                        cat_atual = item.get('categoria', 'Alimentos')
+                        idx_cat = 1 if cat_atual == "Bebidas" else 0
+                        edit_categoria = st.selectbox("Categoria", ["Alimentos", "Bebidas"], index=idx_cat, key=f"edit_cat_{item['id']}")
+                        
                         edit_imagem = st.text_input("Link da Imagem", value=item['imagem'] if item['imagem'] else "")
                         
                         if st.form_submit_button("Salvar Alterações"):
                             if edit_nome and edit_preco > 0:
-                                editar_prato(item['id'], edit_nome, edit_preco, edit_imagem)
+                                editar_prato(item['id'], edit_nome, edit_preco, edit_imagem, edit_categoria)
                                 st.success("Atualizado!")
                                 st.rerun()
             st.divider()
 
 # ==========================================
-# 5. MÓDULO DA COZINHA E FINANCEIRO (MANTIDOS)
+# 5. MÓDULO DA COZINHA E FINANCEIRO
 # ==========================================
 elif menu == "Painel da Cozinha / Gestão":
     st.title("📋 Painel de Controle de Pedidos")
@@ -422,7 +463,6 @@ elif menu == "Relatório Financeiro":
     if df_vendas.empty:
         st.warning("Nenhuma venda concluída.")
     else:
-        # Converter valores para float caso venham como formato genérico numérico do BD
         df_vendas['total'] = df_vendas['total'].astype(float)
         if 'taxa_entrega' in df_vendas.columns:
             df_vendas['taxa_entrega'] = df_vendas['taxa_entrega'].astype(float)
