@@ -507,6 +507,27 @@ elif menu == "Painel da Cozinha / Gestão":
                 taxa = float(row.get('taxa_entrega', 0.0))
                 st.markdown(f"**Total (com R$ {taxa:.2f} frete): R$ {float(row['total']):.2f}**")
 
+                # LÓGICA DE AVISO AUTOMÁTICO NO WHATSAPP DO CLIENTE
+                tel_cliente = re.sub(r'\D', '', str(row.get('telefone', '')))
+                if len(tel_cliente) >= 10:
+                    if not tel_cliente.startswith('55'):
+                        tel_cliente = '55' + tel_cliente
+                        
+                    mensagens_status = {
+                        "Novo": f"Olá {row['cliente']}! Recebemos seu pedido #{row['id']} no Bem Caseiro. Em breve começaremos a preparar! 🍲",
+                        "Em Produção": f"Olá {row['cliente']}! Seu pedido #{row['id']} já está na nossa cozinha sendo preparado com muito carinho! 👨‍🍳",
+                        "Saiu para Entrega": f"Opa {row['cliente']}! O seu pedido #{row['id']} acabou de sair para entrega. O motoboy já está a caminho! 🛵💨"
+                    }
+                    
+                    msg_atual = mensagens_status.get(row['status'], "")
+                    if msg_atual:
+                        msg_codificada = urllib.parse.quote(msg_atual)
+                        link_wa_status = f"https://wa.me/{tel_cliente}?text={msg_codificada}"
+                        st.markdown(
+                            f'<a href="{link_wa_status}" target="_blank" style="display: inline-block; margin-bottom: 15px; padding: 6px 12px; background-color: #f0f2f6; color: #31333F; border: 1px solid #dcdce1; text-align: center; text-decoration: none; font-size: 14px; border-radius: 5px;">📲 Notificar Cliente no WhatsApp</a>',
+                            unsafe_allow_html=True
+                        )
+
                 col1, col2, col3, col4 = st.columns(4)
                 if col1.button("Em Produção", key=f"prod_{row['id']}"):
                     atualizar_status_pedido(row['id'], "Em Produção")
@@ -534,19 +555,53 @@ elif menu == "Relatório Financeiro":
         else:
             df_vendas['taxa_entrega'] = 0.0
             
-        faturamento_total = df_vendas['total'].sum()
-        total_fretes = df_vendas['taxa_entrega'].sum()
-        faturamento_produtos = faturamento_total - total_fretes
-        qtd_pedidos = len(df_vendas)
-        ticket_medio = faturamento_total / qtd_pedidos if qtd_pedidos > 0 else 0
+        # Tratamento de Data para Filtro
+        df_vendas['data_hora_dt'] = pd.to_datetime(df_vendas['data_hora'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
+        
+        # Filtro de Período na Tela
+        col_data1, col_data2 = st.columns(2)
+        hoje = datetime.date.today()
+        data_inicio = col_data1.date_input("Data Inicial", hoje)
+        data_fim = col_data2.date_input("Data Final", hoje)
+        
+        # Aplica o filtro de datas
+        mask = (df_vendas['data_hora_dt'].dt.date >= data_inicio) & (df_vendas['data_hora_dt'].dt.date <= data_fim)
+        df_vendas_filtrado = df_vendas.loc[mask]
+        
+        if df_vendas_filtrado.empty:
+            st.info("Nenhuma venda concluída para o período selecionado.")
+        else:
+            faturamento_total = df_vendas_filtrado['total'].sum()
+            total_fretes = df_vendas_filtrado['taxa_entrega'].sum()
+            faturamento_produtos = faturamento_total - total_fretes
+            qtd_pedidos = len(df_vendas_filtrado)
+            ticket_medio = faturamento_total / qtd_pedidos if qtd_pedidos > 0 else 0
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Faturamento Bruto", f"R$ {faturamento_total:,.2f}")
-        col2.metric("Só Produtos", f"R$ {faturamento_produtos:,.2f}")
-        col3.metric("Total Fretes", f"R$ {total_fretes:,.2f}")
-        col4.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Faturamento Bruto", f"R$ {faturamento_total:,.2f}")
+            col2.metric("Só Produtos", f"R$ {faturamento_produtos:,.2f}")
+            col3.metric("Total Fretes", f"R$ {total_fretes:,.2f}")
+            col4.metric("Ticket Médio", f"R$ {ticket_medio:,.2f}")
 
-        st.divider()
-        st.subheader("Receita por Forma de Pagamento")
-        receita_por_pagamento = df_vendas.groupby('pagamento')['total'].sum().reset_index()
-        st.bar_chart(data=receita_por_pagamento.set_index('pagamento'))
+            st.divider()
+            
+            # Tabela de Histórico Detalhado
+            st.subheader("📋 Histórico Detalhado do Período")
+            df_exibicao = df_vendas_filtrado[['id', 'data_hora', 'cliente', 'telefone', 'pagamento', 'total']].copy()
+            df_exibicao.rename(columns={'id': 'Pedido', 'data_hora': 'Data/Hora', 'cliente': 'Cliente', 'telefone': 'Telefone', 'pagamento': 'Pagamento', 'total': 'Total (R$)'}, inplace=True)
+            st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
+            
+            # Botão de Exportação CSV
+            csv = df_exibicao.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Baixar Histórico em Excel (CSV)",
+                data=csv,
+                file_name=f"relatorio_vendas_{data_inicio}_a_{data_fim}.csv",
+                mime="text/csv",
+                type="primary"
+            )
+
+            st.divider()
+            st.subheader("📈 Receita por Forma de Pagamento")
+            receita_por_pagamento = df_vendas_filtrado.groupby('pagamento')['total'].sum().reset_index()
+            st.bar_chart(data=receita_por_pagamento.set_index('pagamento'))
