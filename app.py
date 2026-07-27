@@ -40,6 +40,7 @@ def inicializar_banco():
     conn = get_conexao()
     c = conn.cursor()
     
+    # 1. Pedidos
     c.execute('''
         CREATE TABLE IF NOT EXISTS pedidos (
             id SERIAL PRIMARY KEY,
@@ -59,6 +60,7 @@ def inicializar_banco():
     if not c.fetchone():
         c.execute("ALTER TABLE pedidos ADD COLUMN motoboy TEXT")
     
+    # 2. Cardápio
     c.execute('''
         CREATE TABLE IF NOT EXISTS cardapio (
             id SERIAL PRIMARY KEY,
@@ -79,6 +81,7 @@ def inicializar_banco():
         ]
         c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria) VALUES (%s, %s, %s, %s, %s)", itens_iniciais)
 
+    # 3. Clientes
     c.execute('''
         CREATE TABLE IF NOT EXISTS clientes (
             telefone TEXT PRIMARY KEY,
@@ -88,6 +91,7 @@ def inicializar_banco():
         )
     ''')
     
+    # 4. Motoboys
     c.execute('''
         CREATE TABLE IF NOT EXISTS motoboys (
             id SERIAL PRIMARY KEY,
@@ -97,9 +101,37 @@ def inicializar_banco():
         )
     ''')
 
+    # 5. Configurações do Sistema
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS configuracoes (
+            chave TEXT PRIMARY KEY,
+            valor TEXT
+        )
+    ''')
+    c.execute("SELECT valor FROM configuracoes WHERE chave = 'alarme_sonoro'")
+    if not c.fetchone():
+        c.execute("INSERT INTO configuracoes (chave, valor) VALUES ('alarme_sonoro', 'ativado')")
+
     conn.commit()
     conn.close()
 
+# Funções de Configuração
+def get_config(chave):
+    conn = get_conexao()
+    c = conn.cursor()
+    c.execute("SELECT valor FROM configuracoes WHERE chave = %s", (chave,))
+    res = c.fetchone()
+    conn.close()
+    return res[0] if res else None
+
+def set_config(chave, valor):
+    conn = get_conexao()
+    c = conn.cursor()
+    c.execute("UPDATE configuracoes SET valor = %s WHERE chave = %s", (valor, chave))
+    conn.commit()
+    conn.close()
+
+# Funções de Clientes
 def buscar_cliente(telefone):
     conn = get_conexao()
     c = conn.cursor()
@@ -119,6 +151,7 @@ def salvar_cliente(telefone, nome, bairro, endereco_rua):
     conn.commit()
     conn.close()
 
+# Funções de Pedidos
 def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, taxa_entrega):
     conn = get_conexao()
     c = conn.cursor()
@@ -163,6 +196,7 @@ def carregar_vendas_concluidas():
     conn.close()
     return df
 
+# Funções de Cardápio
 def carregar_cardapio_completo():
     conn = get_conexao()
     try:
@@ -200,6 +234,7 @@ def editar_prato(prato_id, nome, preco, imagem, categoria):
     conn.commit()
     conn.close()
 
+# Funções de Motoboys
 def carregar_motoboys(ativos_apenas=False):
     conn = get_conexao()
     if ativos_apenas:
@@ -246,7 +281,14 @@ if is_admin:
     st.sidebar.title("🔒 Gestão Bem Caseiro")
     menu = st.sidebar.selectbox(
         "Navegação do Gestor", 
-        ["Painel da Cozinha / Gestão", "Gestão do Cardápio", "Gestão de Motoboys", "Relatório Financeiro", "Fazer Pedido (Cliente)"]
+        [
+            "Painel da Cozinha / Gestão", 
+            "Gestão do Cardápio", 
+            "Gestão de Motoboys", 
+            "Relatório Financeiro", 
+            "Configurações",
+            "Fazer Pedido (Cliente)"
+        ]
     )
 else:
     menu = "Fazer Pedido (Cliente)"
@@ -566,7 +608,28 @@ elif menu == "Gestão de Motoboys":
             st.divider()
 
 # ==========================================
-# 6. MÓDULO DA COZINHA E FINANCEIRO
+# 6. CONFIGURAÇÕES DO SISTEMA (NOVO)
+# ==========================================
+elif menu == "Configurações":
+    st.title("⚙️ Configurações do Sistema")
+    st.write("Ajuste as preferências de funcionamento do painel gerencial.")
+    
+    st.subheader("Notificações e Alertas")
+    
+    status_atual_alarme = get_config('alarme_sonoro')
+    is_alarme_on = True if status_atual_alarme == 'ativado' else False
+    
+    novo_status_alarme = st.toggle("🔔 Tocar alarme sonoro quando chegar um Novo Pedido", value=is_alarme_on)
+    
+    novo_valor_bd = 'ativado' if novo_status_alarme else 'desativado'
+    
+    if novo_valor_bd != status_atual_alarme:
+        set_config('alarme_sonoro', novo_valor_bd)
+        st.success(f"Preferência de alarme atualizada para: **{novo_valor_bd.upper()}**!")
+        st.rerun()
+
+# ==========================================
+# 7. MÓDULO DA COZINHA E FINANCEIRO
 # ==========================================
 elif menu == "Painel da Cozinha / Gestão":
     st.title("📋 Painel de Controle de Pedidos")
@@ -578,23 +641,27 @@ elif menu == "Painel da Cozinha / Gestão":
     if df_pedidos.empty:
         st.info("A cozinha está limpa!")
     else:
-        # NOVO SISTEMA DE ALARME SONORO
+        # VERIFICA O ALARME SONORO
         tem_novo = any(df_pedidos['status'] == 'Novo')
+        status_alarme = get_config('alarme_sonoro')
+        
         if tem_novo:
-            st.error("🔔 **NOVO PEDIDO RECEBIDO!** (Se o som não tocou, clique na tela para liberar o áudio do navegador).")
-            
-            alerta_html = """
-                <audio id="alarme_bemcaseiro" autoplay loop>
-                    <source src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=success-1-6297.mp3" type="audio/mpeg">
-                </audio>
-                <script>
-                    var audio = document.getElementById("alarme_bemcaseiro");
-                    audio.play().catch(function(error) {
-                        console.log("Áudio bloqueado pelo navegador. O usuário precisa interagir com a tela.");
-                    });
-                </script>
-            """
-            components.html(alerta_html, width=0, height=0)
+            if status_alarme == 'ativado':
+                st.error("🔔 **NOVO PEDIDO RECEBIDO!** (Se o som não tocou, clique na tela para liberar o áudio).")
+                alerta_html = """
+                    <audio id="alarme_bemcaseiro" autoplay loop>
+                        <source src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=success-1-6297.mp3" type="audio/mpeg">
+                    </audio>
+                    <script>
+                        var audio = document.getElementById("alarme_bemcaseiro");
+                        audio.play().catch(function(error) {
+                            console.log("Áudio bloqueado pelo navegador.");
+                        });
+                    </script>
+                """
+                components.html(alerta_html, width=0, height=0)
+            else:
+                st.warning("🔔 **NOVO PEDIDO RECEBIDO!** (O alarme sonoro está desativado nas Configurações).")
 
         for index, row in df_pedidos.iterrows():
             with st.expander(f"Pedido #{row['id']} — {row['cliente']} — Status: [{row['status']}]", expanded=True):
