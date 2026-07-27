@@ -4,6 +4,7 @@ import psycopg2
 import json
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import re
 import warnings
 
@@ -39,7 +40,6 @@ def inicializar_banco():
     conn = get_conexao()
     c = conn.cursor()
     
-    # Tabela de Pedidos
     c.execute('''
         CREATE TABLE IF NOT EXISTS pedidos (
             id SERIAL PRIMARY KEY,
@@ -55,12 +55,10 @@ def inicializar_banco():
         )
     ''')
     
-    # Atualiza a tabela de pedidos para incluir a coluna do motoboy (se não existir)
     c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='pedidos' AND column_name='motoboy'")
     if not c.fetchone():
         c.execute("ALTER TABLE pedidos ADD COLUMN motoboy TEXT")
     
-    # Tabela do Cardápio
     c.execute('''
         CREATE TABLE IF NOT EXISTS cardapio (
             id SERIAL PRIMARY KEY,
@@ -81,7 +79,6 @@ def inicializar_banco():
         ]
         c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria) VALUES (%s, %s, %s, %s, %s)", itens_iniciais)
 
-    # Tabela de Clientes
     c.execute('''
         CREATE TABLE IF NOT EXISTS clientes (
             telefone TEXT PRIMARY KEY,
@@ -91,7 +88,6 @@ def inicializar_banco():
         )
     ''')
     
-    # Tabela de Motoboys
     c.execute('''
         CREATE TABLE IF NOT EXISTS motoboys (
             id SERIAL PRIMARY KEY,
@@ -104,7 +100,6 @@ def inicializar_banco():
     conn.commit()
     conn.close()
 
-# Funções de Clientes
 def buscar_cliente(telefone):
     conn = get_conexao()
     c = conn.cursor()
@@ -124,7 +119,6 @@ def salvar_cliente(telefone, nome, bairro, endereco_rua):
     conn.commit()
     conn.close()
 
-# Funções de Pedidos
 def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, taxa_entrega):
     conn = get_conexao()
     c = conn.cursor()
@@ -169,7 +163,6 @@ def carregar_vendas_concluidas():
     conn.close()
     return df
 
-# Funções de Cardápio
 def carregar_cardapio_completo():
     conn = get_conexao()
     try:
@@ -207,7 +200,6 @@ def editar_prato(prato_id, nome, preco, imagem, categoria):
     conn.commit()
     conn.close()
 
-# Funções de Motoboys
 def carregar_motoboys(ativos_apenas=False):
     conn = get_conexao()
     if ativos_apenas:
@@ -295,7 +287,7 @@ if menu == "Fazer Pedido (Cliente)":
                             with col_desc:
                                 st.markdown(f"**{item['nome']}**")
                                 st.markdown(f"R$ {float(item['preco']):.2f}")
-                                obs_alim = st.text_input("Observação (opcional):", placeholder="Ex: sem cebola, pouca farofa", key=f"obs_alim_{item['id']}")
+                                obs_alim = st.text_input("Observação (opcional):", placeholder="Ex: sem cebola", key=f"obs_alim_{item['id']}")
                             with col_add:
                                 qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_{item['id']}")
                                 if st.button("➕ Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
@@ -332,7 +324,7 @@ if menu == "Fazer Pedido (Cliente)":
                                 elif "Refrigerante" in item['nome']:
                                     sabor = st.selectbox("Opção:", ["Coca-Cola", "Guaraná Antarctica", "Fanta Laranja", "Sprite", "Coca-Cola Zero"], key=f"sabor_{item['id']}")
                                 
-                                obs_beb = st.text_input("Observação (opcional):", placeholder="Ex: sem açúcar, com gelo", key=f"obs_beb_{item['id']}")
+                                obs_beb = st.text_input("Observação (opcional):", placeholder="Ex: sem açúcar", key=f"obs_beb_{item['id']}")
                                 
                             with col_add:
                                 qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_beb_{item['id']}")
@@ -355,7 +347,6 @@ if menu == "Fazer Pedido (Cliente)":
 
             if len(st.session_state['carrinho']) > 0:
                 st.subheader("🛒 Resumo e Conferência do Pedido")
-                st.info("Você pode editar as quantidades ou remover itens antes de prosseguir.")
                 
                 total_itens = 0.0
                 carrinho_formatado_para_banco = []
@@ -465,8 +456,6 @@ if menu == "Fazer Pedido (Cliente)":
                             )
                         else:
                             st.error("Por favor, informe seu WhatsApp, Nome, e informe o endereço.")
-            else:
-                st.info("👆 Selecione os itens no cardápio acima e clique em 'Adicionar' para iniciar o seu pedido.")
 
     except Exception as e:
         st.error(f"Erro ao carregar cardápio. O banco de dados não está respondendo corretamente: {e}")
@@ -534,7 +523,7 @@ elif menu == "Gestão do Cardápio":
             st.divider()
 
 # ==========================================
-# 5. GESTÃO DE MOTOBOYS (NOVO)
+# 5. GESTÃO DE MOTOBOYS
 # ==========================================
 elif menu == "Gestão de Motoboys":
     st.title("🛵 Gestão de Motoboys")
@@ -583,13 +572,24 @@ elif menu == "Painel da Cozinha / Gestão":
     st.title("📋 Painel de Controle de Pedidos")
     df_pedidos = carregar_pedidos_ativos()
     
-    # Carrega motoboys ativos para o selectbox
     motoboys_ativos = carregar_motoboys(ativos_apenas=True)
     lista_nomes_motoboys = ["Não vinculado / Retirada"] + [m['nome'] for m in motoboys_ativos]
 
     if df_pedidos.empty:
         st.info("A cozinha está limpa!")
     else:
+        # LÓGICA DO ALERTA SONORO
+        tem_novo = any(df_pedidos['status'] == 'Novo')
+        if tem_novo:
+            st.markdown(
+                """
+                <audio autoplay="true">
+                    <source src="https://actions.google.com/sounds/v1/alarms/ding.ogg" type="audio/ogg">
+                </audio>
+                """,
+                unsafe_allow_html=True
+            )
+
         for index, row in df_pedidos.iterrows():
             with st.expander(f"Pedido #{row['id']} — {row['cliente']} — Status: [{row['status']}]", expanded=True):
                 telefone_exibicao = row.get('telefone', '')
@@ -625,7 +625,48 @@ elif menu == "Painel da Cozinha / Gestão":
                             unsafe_allow_html=True
                         )
 
-                # Opção de vincular motoboy antes de enviar
+                # BOTÃO DE IMPRESSÃO DO CUPOM
+                with st.popover("🖨️ Imprimir Cupom"):
+                    # Gera o HTML do Recibo
+                    itens_html = "".join([f"{i['qtd']}x {i['nome']} <br>&nbsp;&nbsp;R$ {float(i['subtotal']):.2f}<br>" for i in itens])
+                    cupom_html = f"""
+                    <html>
+                    <head>
+                        <style>
+                            body {{ font-family: monospace; font-size: 14px; margin: 0; padding: 10px; color: #000; background: #fff; }}
+                            .center {{ text-align: center; }}
+                            .linha {{ border-bottom: 1px dashed #000; margin: 10px 0; }}
+                            .btn-imprimir {{ display: block; width: 100%; padding: 10px; margin-top: 15px; background: #000; color: #fff; border: none; cursor: pointer; font-weight: bold; }}
+                            @media print {{
+                                .btn-imprimir {{ display: none; }} /* Esconde o botão na hora da impressão */
+                            }}
+                        </style>
+                    </head>
+                    <body>
+                        <div class="center">
+                            <strong>BEM CASEIRO DELIVERY</strong><br>
+                            Pedido #{row['id']}<br>
+                            Data: {row['data_hora']}
+                        </div>
+                        <div class="linha"></div>
+                        <strong>Cliente:</strong> {row['cliente']}<br>
+                        <strong>Tel:</strong> {row['telefone']}<br>
+                        <strong>End:</strong> {row['endereco']}<br>
+                        <div class="linha"></div>
+                        <strong>ITENS:</strong><br>
+                        {itens_html}
+                        <div class="linha"></div>
+                        <strong>Subtotal:</strong> R$ {float(row['total']) - taxa:.2f}<br>
+                        <strong>Frete:</strong> R$ {taxa:.2f}<br>
+                        <strong>TOTAL: R$ {float(row['total']):.2f}</strong><br>
+                        <strong>Pgto:</strong> {row['pagamento']}<br>
+                        <div class="linha"></div>
+                        <button class="btn-imprimir" onclick="window.print()">🖨️ CLIQUE AQUI PARA IMPRIMIR</button>
+                    </body>
+                    </html>
+                    """
+                    components.html(cupom_html, height=450, scrolling=True)
+
                 motoboy_selecionado = st.selectbox("Vincular Motoboy para Entrega:", lista_nomes_motoboys, key=f"sel_moto_{row['id']}")
 
                 col1, col2, col3, col4 = st.columns(4)
@@ -682,9 +723,7 @@ elif menu == "Relatório Financeiro":
 
             st.divider()
             
-            # NOVO: RELATÓRIO DE MOTOBOYS
             st.subheader("🛵 Acerto dos Motoboys (Período Selecionado)")
-            # Filtra apenas pedidos que têm motoboy vinculado
             df_entregas = df_vendas_filtrado[
                 (df_vendas_filtrado['motoboy'].notna()) & 
                 (df_vendas_filtrado['motoboy'] != '') & 
@@ -694,7 +733,6 @@ elif menu == "Relatório Financeiro":
             if df_entregas.empty:
                 st.info("Nenhum pedido foi vinculado a um motoboy neste período.")
             else:
-                # Agrupa por motoboy para calcular quantidade de corridas e soma das taxas
                 acerto_motoboys = df_entregas.groupby('motoboy').agg(
                     Corridas=('id', 'count'),
                     Total_Taxas=('taxa_entrega', 'sum')
@@ -707,7 +745,6 @@ elif menu == "Relatório Financeiro":
             
             st.subheader("📋 Histórico Detalhado do Período")
             colunas_exibicao = ['id', 'data_hora', 'cliente', 'motoboy', 'pagamento', 'total']
-            # Garante que a coluna motoboy existe no dataframe para não dar erro
             if 'motoboy' not in df_vendas_filtrado.columns:
                 df_vendas_filtrado['motoboy'] = ""
                 
