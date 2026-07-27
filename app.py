@@ -578,17 +578,23 @@ elif menu == "Painel da Cozinha / Gestão":
     if df_pedidos.empty:
         st.info("A cozinha está limpa!")
     else:
-        # LÓGICA DO ALERTA SONORO
+        # NOVO SISTEMA DE ALARME SONORO
         tem_novo = any(df_pedidos['status'] == 'Novo')
         if tem_novo:
-            st.markdown(
-                """
-                <audio autoplay="true">
-                    <source src="https://actions.google.com/sounds/v1/alarms/ding.ogg" type="audio/ogg">
+            st.error("🔔 **NOVO PEDIDO RECEBIDO!** (Se o som não tocou, clique na tela para liberar o áudio do navegador).")
+            
+            alerta_html = """
+                <audio id="alarme_bemcaseiro" autoplay loop>
+                    <source src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=success-1-6297.mp3" type="audio/mpeg">
                 </audio>
-                """,
-                unsafe_allow_html=True
-            )
+                <script>
+                    var audio = document.getElementById("alarme_bemcaseiro");
+                    audio.play().catch(function(error) {
+                        console.log("Áudio bloqueado pelo navegador. O usuário precisa interagir com a tela.");
+                    });
+                </script>
+            """
+            components.html(alerta_html, width=0, height=0)
 
         for index, row in df_pedidos.iterrows():
             with st.expander(f"Pedido #{row['id']} — {row['cliente']} — Status: [{row['status']}]", expanded=True):
@@ -625,9 +631,7 @@ elif menu == "Painel da Cozinha / Gestão":
                             unsafe_allow_html=True
                         )
 
-                # BOTÃO DE IMPRESSÃO DO CUPOM
                 with st.popover("🖨️ Imprimir Cupom"):
-                    # Gera o HTML do Recibo
                     itens_html = "".join([f"{i['qtd']}x {i['nome']} <br>&nbsp;&nbsp;R$ {float(i['subtotal']):.2f}<br>" for i in itens])
                     cupom_html = f"""
                     <html>
@@ -638,7 +642,7 @@ elif menu == "Painel da Cozinha / Gestão":
                             .linha {{ border-bottom: 1px dashed #000; margin: 10px 0; }}
                             .btn-imprimir {{ display: block; width: 100%; padding: 10px; margin-top: 15px; background: #000; color: #fff; border: none; cursor: pointer; font-weight: bold; }}
                             @media print {{
-                                .btn-imprimir {{ display: none; }} /* Esconde o botão na hora da impressão */
+                                .btn-imprimir {{ display: none; }} 
                             }}
                         </style>
                     </head>
