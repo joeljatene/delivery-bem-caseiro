@@ -7,7 +7,6 @@ import streamlit as st
 import re
 import warnings
 
-# Oculta avisos do Pandas sobre conexões diretas
 warnings.filterwarnings('ignore', category=UserWarning)
 
 # ==========================================
@@ -26,7 +25,6 @@ TAXAS_ENTREGA = {
     "Cauamé": 12.00
 }
 
-# INICIALIZA O CARRINHO NA MEMÓRIA DO APLICATIVO
 if 'carrinho' not in st.session_state:
     st.session_state['carrinho'] = {}
 
@@ -41,6 +39,7 @@ def inicializar_banco():
     conn = get_conexao()
     c = conn.cursor()
     
+    # Tabela de Pedidos
     c.execute('''
         CREATE TABLE IF NOT EXISTS pedidos (
             id SERIAL PRIMARY KEY,
@@ -56,6 +55,12 @@ def inicializar_banco():
         )
     ''')
     
+    # Atualiza a tabela de pedidos para incluir a coluna do motoboy (se não existir)
+    c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='pedidos' AND column_name='motoboy'")
+    if not c.fetchone():
+        c.execute("ALTER TABLE pedidos ADD COLUMN motoboy TEXT")
+    
+    # Tabela do Cardápio
     c.execute('''
         CREATE TABLE IF NOT EXISTS cardapio (
             id SERIAL PRIMARY KEY,
@@ -76,6 +81,7 @@ def inicializar_banco():
         ]
         c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria) VALUES (%s, %s, %s, %s, %s)", itens_iniciais)
 
+    # Tabela de Clientes
     c.execute('''
         CREATE TABLE IF NOT EXISTS clientes (
             telefone TEXT PRIMARY KEY,
@@ -84,10 +90,21 @@ def inicializar_banco():
             endereco_rua TEXT
         )
     ''')
+    
+    # Tabela de Motoboys
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS motoboys (
+            id SERIAL PRIMARY KEY,
+            nome TEXT,
+            telefone TEXT,
+            ativo INTEGER DEFAULT 1
+        )
+    ''')
 
     conn.commit()
     conn.close()
 
+# Funções de Clientes
 def buscar_cliente(telefone):
     conn = get_conexao()
     c = conn.cursor()
@@ -107,6 +124,7 @@ def salvar_cliente(telefone, nome, bairro, endereco_rua):
     conn.commit()
     conn.close()
 
+# Funções de Pedidos
 def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, taxa_entrega):
     conn = get_conexao()
     c = conn.cursor()
@@ -125,23 +143,33 @@ def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, tax
 
 def carregar_pedidos_ativos():
     conn = get_conexao()
-    df = pd.read_sql_query("SELECT * FROM pedidos WHERE status NOT IN ('Concluído', 'Cancelado') ORDER BY id ASC", conn)
+    try:
+        df = pd.read_sql_query("SELECT id, data_hora, cliente, telefone, endereco, itens, total, pagamento, status, taxa_entrega, motoboy FROM pedidos WHERE status NOT IN ('Concluído', 'Cancelado') ORDER BY id ASC", conn)
+    except:
+        df = pd.read_sql_query("SELECT *, '' as motoboy FROM pedidos WHERE status NOT IN ('Concluído', 'Cancelado') ORDER BY id ASC", conn)
     conn.close()
     return df
 
-def atualizar_status_pedido(pedido_id, novo_status):
+def atualizar_status_pedido(pedido_id, novo_status, motoboy=None):
     conn = get_conexao()
     c = conn.cursor()
-    c.execute("UPDATE pedidos SET status = %s WHERE id = %s", (novo_status, pedido_id))
+    if motoboy:
+        c.execute("UPDATE pedidos SET status = %s, motoboy = %s WHERE id = %s", (novo_status, motoboy, pedido_id))
+    else:
+        c.execute("UPDATE pedidos SET status = %s WHERE id = %s", (novo_status, pedido_id))
     conn.commit()
     conn.close()
 
 def carregar_vendas_concluidas():
     conn = get_conexao()
-    df = pd.read_sql_query("SELECT * FROM pedidos WHERE status = 'Concluído'", conn)
+    try:
+        df = pd.read_sql_query("SELECT id, data_hora, cliente, telefone, endereco, itens, total, pagamento, status, taxa_entrega, motoboy FROM pedidos WHERE status = 'Concluído'", conn)
+    except:
+        df = pd.read_sql_query("SELECT *, '' as motoboy FROM pedidos WHERE status = 'Concluído'", conn)
     conn.close()
     return df
 
+# Funções de Cardápio
 def carregar_cardapio_completo():
     conn = get_conexao()
     try:
@@ -179,6 +207,37 @@ def editar_prato(prato_id, nome, preco, imagem, categoria):
     conn.commit()
     conn.close()
 
+# Funções de Motoboys
+def carregar_motoboys(ativos_apenas=False):
+    conn = get_conexao()
+    if ativos_apenas:
+        df = pd.read_sql_query("SELECT * FROM motoboys WHERE ativo = 1 ORDER BY nome", conn)
+    else:
+        df = pd.read_sql_query("SELECT * FROM motoboys ORDER BY ativo DESC, nome", conn)
+    conn.close()
+    return df.to_dict('records')
+
+def adicionar_motoboy(nome, telefone):
+    conn = get_conexao()
+    c = conn.cursor()
+    c.execute("INSERT INTO motoboys (nome, telefone, ativo) VALUES (%s, %s, 1)", (nome, telefone))
+    conn.commit()
+    conn.close()
+
+def alternar_status_motoboy(motoboy_id, ativo):
+    conn = get_conexao()
+    c = conn.cursor()
+    c.execute("UPDATE motoboys SET ativo = %s WHERE id = %s", (ativo, motoboy_id))
+    conn.commit()
+    conn.close()
+
+def excluir_motoboy(motoboy_id):
+    conn = get_conexao()
+    c = conn.cursor()
+    c.execute("DELETE FROM motoboys WHERE id = %s", (motoboy_id,))
+    conn.commit()
+    conn.close()
+
 try:
     inicializar_banco()
 except Exception as e:
@@ -195,7 +254,7 @@ if is_admin:
     st.sidebar.title("🔒 Gestão Bem Caseiro")
     menu = st.sidebar.selectbox(
         "Navegação do Gestor", 
-        ["Painel da Cozinha / Gestão", "Gestão do Cardápio", "Relatório Financeiro", "Fazer Pedido (Cliente)"]
+        ["Painel da Cozinha / Gestão", "Gestão do Cardápio", "Gestão de Motoboys", "Relatório Financeiro", "Fazer Pedido (Cliente)"]
     )
 else:
     menu = "Fazer Pedido (Cliente)"
@@ -225,7 +284,6 @@ if menu == "Fazer Pedido (Cliente)":
         else:
             aba_alimentos, aba_bebidas = st.tabs(["🍽️ Alimentos", "🥤 Bebidas"])
 
-            # ABA DE ALIMENTOS
             with aba_alimentos:
                 for item in itens_disponiveis:
                     if item.get("categoria", "Alimentos") != "Bebidas":
@@ -241,7 +299,6 @@ if menu == "Fazer Pedido (Cliente)":
                             with col_add:
                                 qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_{item['id']}")
                                 if st.button("➕ Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
-                                    
                                     nome_final = f"{item['nome']} [Obs: {obs_alim}]" if obs_alim else item['nome']
                                     chave_item = f"{item['id']}_{obs_alim}"
                                     
@@ -257,7 +314,6 @@ if menu == "Fazer Pedido (Cliente)":
                                     st.toast(f"{qtd_desejada}x {item['nome']} adicionado ao carrinho!", icon="✅")
                         st.divider()
 
-            # ABA DE BEBIDAS
             with aba_bebidas:
                 for item in itens_disponiveis:
                     if item.get("categoria") == "Bebidas":
@@ -281,7 +337,6 @@ if menu == "Fazer Pedido (Cliente)":
                             with col_add:
                                 qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_beb_{item['id']}")
                                 if st.button("➕ Adicionar", key=f"btn_add_beb_{item['id']}", use_container_width=True):
-                                    
                                     nome_com_sabor = f"{item['nome']} ({sabor})" if sabor else item['nome']
                                     nome_final = f"{nome_com_sabor} [Obs: {obs_beb}]" if obs_beb else nome_com_sabor
                                     chave_item = f"{item['id']}_{sabor}_{obs_beb}"
@@ -298,7 +353,6 @@ if menu == "Fazer Pedido (Cliente)":
                                     st.toast(f"{qtd_desejada}x {nome_com_sabor} adicionado ao carrinho!", icon="✅")
                         st.divider()
 
-            # LÓGICA DE CONFERÊNCIA DO PEDIDO (Carrinho)
             if len(st.session_state['carrinho']) > 0:
                 st.subheader("🛒 Resumo e Conferência do Pedido")
                 st.info("Você pode editar as quantidades ou remover itens antes de prosseguir.")
@@ -337,9 +391,7 @@ if menu == "Fazer Pedido (Cliente)":
                 st.markdown(f"### 💰 Subtotal dos itens: R$ {total_itens:.2f}")
                 st.write("---")
 
-                # FORMULÁRIO DE ENTREGA
                 st.subheader("🛵 Dados para Entrega")
-                
                 telefone_input = st.text_input("Seu WhatsApp (Digite apenas números e clique fora)", placeholder="Ex: 95999999999")
                 
                 cli_nome = ""
@@ -380,11 +432,9 @@ if menu == "Fazer Pedido (Cliente)":
 
                     if enviar:
                         if telefone_limpo and nome_cliente and carrinho_formatado_para_banco and (endereco_rua or bairro_selecionado == "Retirar no Local"):
-                            
                             valor_frete = TAXAS_ENTREGA[bairro_selecionado]
                             endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if bairro_selecionado != "Retirar no Local" else "Retirada no Local"
                             total_geral = total_itens + valor_frete
-                            
                             pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
                             
                             salvar_cliente(telefone_limpo, nome_cliente, bairro_selecionado, endereco_rua)
@@ -422,7 +472,7 @@ if menu == "Fazer Pedido (Cliente)":
         st.error(f"Erro ao carregar cardápio. O banco de dados não está respondendo corretamente: {e}")
 
 # ==========================================
-# 4. GESTÃO DO CARDÁPIO (COM EDIÇÃO)
+# 4. GESTÃO DO CARDÁPIO
 # ==========================================
 elif menu == "Gestão do Cardápio":
     st.title("📝 Gestão do Cardápio")
@@ -444,7 +494,6 @@ elif menu == "Gestão do Cardápio":
 
     st.divider()
     st.subheader("Itens Cadastrados")
-    
     cardapio_banco = carregar_cardapio_completo()
     
     if not cardapio_banco:
@@ -485,11 +534,58 @@ elif menu == "Gestão do Cardápio":
             st.divider()
 
 # ==========================================
-# 5. MÓDULO DA COZINHA E FINANCEIRO
+# 5. GESTÃO DE MOTOBOYS (NOVO)
+# ==========================================
+elif menu == "Gestão de Motoboys":
+    st.title("🛵 Gestão de Motoboys")
+
+    with st.expander("➕ Cadastrar Novo Motoboy", expanded=False):
+        with st.form("form_novo_motoboy", clear_on_submit=True):
+            nome_motoboy = st.text_input("Nome do Entregador*")
+            tel_motoboy = st.text_input("Telefone/WhatsApp")
+            
+            if st.form_submit_button("Salvar Motoboy"):
+                if nome_motoboy:
+                    adicionar_motoboy(nome_motoboy, tel_motoboy)
+                    st.success(f"Motoboy '{nome_motoboy}' cadastrado com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("O nome do motoboy é obrigatório.")
+
+    st.divider()
+    st.subheader("Equipe de Entrega")
+    lista_motoboys_banco = carregar_motoboys(ativos_apenas=False)
+    
+    if not lista_motoboys_banco:
+        st.info("Nenhum motoboy cadastrado. Adicione sua equipe acima.")
+    else:
+        for moto in lista_motoboys_banco:
+            with st.container():
+                c1, c2, c3, c4 = st.columns([3, 2, 1, 1])
+                c1.write(f"**{moto['nome']}**")
+                c2.write(f"{moto['telefone']}")
+                
+                is_ativo = bool(moto['ativo'])
+                toggle_ativo = c3.toggle("Ativo", value=is_ativo, key=f"tgl_moto_{moto['id']}")
+                if toggle_ativo != is_ativo:
+                    alternar_status_motoboy(moto['id'], int(toggle_ativo))
+                    st.rerun()
+                    
+                if c4.button("🗑️ Excluir", key=f"del_moto_{moto['id']}"):
+                    excluir_motoboy(moto['id'])
+                    st.rerun()
+            st.divider()
+
+# ==========================================
+# 6. MÓDULO DA COZINHA E FINANCEIRO
 # ==========================================
 elif menu == "Painel da Cozinha / Gestão":
     st.title("📋 Painel de Controle de Pedidos")
     df_pedidos = carregar_pedidos_ativos()
+    
+    # Carrega motoboys ativos para o selectbox
+    motoboys_ativos = carregar_motoboys(ativos_apenas=True)
+    lista_nomes_motoboys = ["Não vinculado / Retirada"] + [m['nome'] for m in motoboys_ativos]
 
     if df_pedidos.empty:
         st.info("A cozinha está limpa!")
@@ -499,6 +595,8 @@ elif menu == "Painel da Cozinha / Gestão":
                 telefone_exibicao = row.get('telefone', '')
                 st.markdown(f"**WhatsApp:** {telefone_exibicao} | **Pagamento:** {row['pagamento']}")
                 st.markdown(f"**Endereço:** {row['endereco']}")
+                if row.get('motoboy') and row['motoboy'] != "Não vinculado / Retirada":
+                    st.markdown(f"🛵 **Entregador:** {row['motoboy']}")
                 
                 itens = json.loads(row['itens'])
                 for i in itens:
@@ -507,7 +605,6 @@ elif menu == "Painel da Cozinha / Gestão":
                 taxa = float(row.get('taxa_entrega', 0.0))
                 st.markdown(f"**Total (com R$ {taxa:.2f} frete): R$ {float(row['total']):.2f}**")
 
-                # LÓGICA DE AVISO AUTOMÁTICO NO WHATSAPP DO CLIENTE
                 tel_cliente = re.sub(r'\D', '', str(row.get('telefone', '')))
                 if len(tel_cliente) >= 10:
                     if not tel_cliente.startswith('55'):
@@ -528,15 +625,18 @@ elif menu == "Painel da Cozinha / Gestão":
                             unsafe_allow_html=True
                         )
 
+                # Opção de vincular motoboy antes de enviar
+                motoboy_selecionado = st.selectbox("Vincular Motoboy para Entrega:", lista_nomes_motoboys, key=f"sel_moto_{row['id']}")
+
                 col1, col2, col3, col4 = st.columns(4)
                 if col1.button("Em Produção", key=f"prod_{row['id']}"):
-                    atualizar_status_pedido(row['id'], "Em Produção")
+                    atualizar_status_pedido(row['id'], "Em Produção", motoboy_selecionado)
                     st.rerun()
                 if col2.button("Saiu para Entrega", key=f"ent_{row['id']}"):
-                    atualizar_status_pedido(row['id'], "Saiu para Entrega")
+                    atualizar_status_pedido(row['id'], "Saiu para Entrega", motoboy_selecionado)
                     st.rerun()
                 if col3.button("✅ Concluir", key=f"conc_{row['id']}"):
-                    atualizar_status_pedido(row['id'], "Concluído")
+                    atualizar_status_pedido(row['id'], "Concluído", motoboy_selecionado)
                     st.rerun()
                 if col4.button("❌ Cancelar", key=f"canc_{row['id']}"):
                     atualizar_status_pedido(row['id'], "Cancelado")
@@ -555,16 +655,13 @@ elif menu == "Relatório Financeiro":
         else:
             df_vendas['taxa_entrega'] = 0.0
             
-        # Tratamento de Data para Filtro
         df_vendas['data_hora_dt'] = pd.to_datetime(df_vendas['data_hora'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
         
-        # Filtro de Período na Tela
         col_data1, col_data2 = st.columns(2)
         hoje = datetime.date.today()
         data_inicio = col_data1.date_input("Data Inicial", hoje)
         data_fim = col_data2.date_input("Data Final", hoje)
         
-        # Aplica o filtro de datas
         mask = (df_vendas['data_hora_dt'].dt.date >= data_inicio) & (df_vendas['data_hora_dt'].dt.date <= data_fim)
         df_vendas_filtrado = df_vendas.loc[mask]
         
@@ -585,13 +682,39 @@ elif menu == "Relatório Financeiro":
 
             st.divider()
             
-            # Tabela de Histórico Detalhado
+            # NOVO: RELATÓRIO DE MOTOBOYS
+            st.subheader("🛵 Acerto dos Motoboys (Período Selecionado)")
+            # Filtra apenas pedidos que têm motoboy vinculado
+            df_entregas = df_vendas_filtrado[
+                (df_vendas_filtrado['motoboy'].notna()) & 
+                (df_vendas_filtrado['motoboy'] != '') & 
+                (df_vendas_filtrado['motoboy'] != 'Não vinculado / Retirada')
+            ]
+            
+            if df_entregas.empty:
+                st.info("Nenhum pedido foi vinculado a um motoboy neste período.")
+            else:
+                # Agrupa por motoboy para calcular quantidade de corridas e soma das taxas
+                acerto_motoboys = df_entregas.groupby('motoboy').agg(
+                    Corridas=('id', 'count'),
+                    Total_Taxas=('taxa_entrega', 'sum')
+                ).reset_index()
+                
+                acerto_motoboys.rename(columns={'motoboy': 'Entregador', 'Total_Taxas': 'Valor a Pagar (R$)'}, inplace=True)
+                st.dataframe(acerto_motoboys, use_container_width=True, hide_index=True)
+
+            st.divider()
+            
             st.subheader("📋 Histórico Detalhado do Período")
-            df_exibicao = df_vendas_filtrado[['id', 'data_hora', 'cliente', 'telefone', 'pagamento', 'total']].copy()
-            df_exibicao.rename(columns={'id': 'Pedido', 'data_hora': 'Data/Hora', 'cliente': 'Cliente', 'telefone': 'Telefone', 'pagamento': 'Pagamento', 'total': 'Total (R$)'}, inplace=True)
+            colunas_exibicao = ['id', 'data_hora', 'cliente', 'motoboy', 'pagamento', 'total']
+            # Garante que a coluna motoboy existe no dataframe para não dar erro
+            if 'motoboy' not in df_vendas_filtrado.columns:
+                df_vendas_filtrado['motoboy'] = ""
+                
+            df_exibicao = df_vendas_filtrado[colunas_exibicao].copy()
+            df_exibicao.rename(columns={'id': 'Pedido', 'data_hora': 'Data/Hora', 'cliente': 'Cliente', 'motoboy': 'Entregador', 'pagamento': 'Pagamento', 'total': 'Total (R$)'}, inplace=True)
             st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
             
-            # Botão de Exportação CSV
             csv = df_exibicao.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Baixar Histórico em Excel (CSV)",
