@@ -197,9 +197,10 @@ def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, tax
     ''', (data_hora, cliente, telefone, endereco, itens_json, total, pagamento, 'Novo', taxa_entrega))
     pedido_id = c.fetchone()[0]
     
+    # Subtrai o estoque corretamente
     for item in itens:
         item_id = item.get('id')
-        qtd = item.get('qtd', 1)
+        qtd = int(item.get('qtd', 1))
         if item_id:
             c.execute("UPDATE cardapio SET estoque = GREATEST(estoque - %s, 0) WHERE id = %s AND estoque != -1", (qtd, item_id))
             
@@ -219,6 +220,19 @@ def carregar_pedidos_ativos():
 def atualizar_status_pedido(pedido_id, novo_status, motoboy=None):
     conn = get_conexao()
     c = conn.cursor()
+    
+    # Lógica de estorno de estoque caso o pedido seja cancelado
+    if novo_status == "Cancelado":
+        c.execute("SELECT status, itens FROM pedidos WHERE id = %s", (pedido_id,))
+        resultado = c.fetchone()
+        if resultado and resultado[0] != "Cancelado":
+            itens_pedido = json.loads(resultado[1])
+            for item in itens_pedido:
+                item_id = item.get('id')
+                qtd = int(item.get('qtd', 1))
+                if item_id:
+                    c.execute("UPDATE cardapio SET estoque = estoque + %s WHERE id = %s AND estoque != -1", (qtd, item_id))
+                    
     if motoboy:
         c.execute("UPDATE pedidos SET status = %s, motoboy = %s WHERE id = %s", (novo_status, motoboy, pedido_id))
     else:
@@ -240,7 +254,6 @@ def carregar_cardapio_completo():
     try:
         df = pd.read_sql_query("SELECT id, nome, preco, disponivel, imagem, categoria, estoque, opcoes FROM cardapio ORDER BY disponivel DESC, categoria ASC, nome ASC", conn)
     except:
-        # Fallback de segurança se falhar na atualização em tempo real
         df = pd.read_sql_query("SELECT *, 'Alimentos' as categoria, -1 as estoque, '' as opcoes FROM cardapio ORDER BY disponivel DESC, id ASC", conn)
     conn.close()
     return df.to_dict('records')
@@ -420,14 +433,25 @@ if menu == "Fazer Pedido (Cliente)":
         else:
             aba_alimentos, aba_bebidas = st.tabs(["🍽️ Alimentos", "🥤 Bebidas"])
 
-            # Função auxiliar para desenhar itens para evitar código repetido nas abas
             def renderizar_itens(categoria_filtro):
                 for item in itens_disponiveis:
                     eh_esta_categoria = (item.get("categoria", "Alimentos") == "Bebidas") if categoria_filtro == "Bebidas" else (item.get("categoria", "Alimentos") != "Bebidas")
                     
                     if eh_esta_categoria:
-                        esgotado = (item.get('estoque', -1) == 0)
-                        opcoes_lista = [o.strip() for o in str(item.get('opcoes', '')).split(',') if o.strip()]
+                        # Limpeza segura do estoque para lidar com NaNs
+                        estoque_val = item.get('estoque')
+                        if pd.isna(estoque_val) or estoque_val is None:
+                            estoque_real = -1
+                        else:
+                            estoque_real = int(float(estoque_val))
+                            
+                        esgotado = (estoque_real == 0)
+                        
+                        # Limpeza segura de opções
+                        opcoes_raw = item.get('opcoes', '')
+                        if pd.isna(opcoes_raw) or opcoes_raw is None:
+                            opcoes_raw = ''
+                        opcoes_lista = [o.strip() for o in str(opcoes_raw).split(',') if o.strip() and o.strip() != 'nan']
                         
                         with st.container():
                             col_img, col_desc, col_add = st.columns([1.5, 3, 2])
@@ -442,31 +466,40 @@ if menu == "Fazer Pedido (Cliente)":
                                     if opcoes_lista:
                                         sabor_selecionado = st.selectbox("Opções/Sabores:", opcoes_lista, key=f"sabor_{item['id']}")
                                     
-                                    obs_input = st.text_input("Observações:", placeholder="Ex: sem açúcar, sem cebola", key=f"obs_{item['id']}")
+                                    obs_input = st.text_input("Observações:", placeholder="Ex: sem cebola", key=f"obs_{item['id']}")
                                 else:
                                     st.markdown("<div class='esgotado-badge'>ESGOTADO HOJE</div>", unsafe_allow_html=True)
                                     
                             with col_add:
                                 if not esgotado:
-                                    max_qtd = item.get('estoque', 20) if item.get('estoque', -1) > 0 else 20
-                                    qtd_desejada = st.number_input("Qtd", min_value=1, max_value=max_qtd, value=1, key=f"qtd_item_{item['id']}")
+                                    # Verifica quanto desse item já tem no carrinho
+                                    qtd_no_carrinho = 0
+                                    for k, v in st.session_state['carrinho'].items():
+                                        if v['id'] == item['id']:
+                                            qtd_no_carrinho += v['qtd']
+                                            
+                                    estoque_disponivel = (estoque_real - qtd_no_carrinho) if estoque_real != -1 else 20
                                     
-                                    if loja_aberta:
-                                        if st.button("Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
-                                            nome_com_sabor = f"{item['nome']} ({sabor_selecionado})" if sabor_selecionado else item['nome']
-                                            nome_final = f"{nome_com_sabor} [Obs: {obs_input}]" if obs_input else nome_com_sabor
-                                            chave_item = f"{item['id']}_{sabor_selecionado}_{obs_input}"
-                                            
-                                            if chave_item in st.session_state['carrinho']: 
-                                                st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
-                                            else: 
-                                                st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
-                                            
-                                            st.toast(f"{qtd_desejada}x adicionado!", icon="✅")
+                                    if estoque_real != -1 and estoque_disponivel <= 0:
+                                        st.button("Limite no Carrinho", key=f"btn_max_{item['id']}", disabled=True, use_container_width=True)
                                     else:
-                                        st.button("Fechado", key=f"btn_closed_{item['id']}", disabled=True, use_container_width=True)
-                                else:
-                                    st.button("Esgotado", key=f"btn_esg_{item['id']}", disabled=True, use_container_width=True)
+                                        qtd_desejada = st.number_input("Qtd", min_value=1, max_value=estoque_disponivel, value=1, key=f"qtd_item_{item['id']}")
+                                        
+                                        if loja_aberta:
+                                            if st.button("Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
+                                                nome_com_sabor = f"{item['nome']} ({sabor_selecionado})" if sabor_selecionado else item['nome']
+                                                nome_final = f"{nome_com_sabor} [Obs: {obs_input}]" if obs_input else nome_com_sabor
+                                                chave_item = f"{item['id']}_{sabor_selecionado}_{obs_input}"
+                                                
+                                                if chave_item in st.session_state['carrinho']: 
+                                                    st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
+                                                else: 
+                                                    st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
+                                                
+                                                st.toast(f"{qtd_desejada}x adicionado!", icon="✅")
+                                                st.rerun() # Atualiza a tela para reajustar o limite do estoque visual
+                                        else:
+                                            st.button("Fechado", key=f"btn_closed_{item['id']}", disabled=True, use_container_width=True)
 
             with aba_alimentos:
                 renderizar_itens("Alimentos")
@@ -493,10 +526,29 @@ if menu == "Fazer Pedido (Cliente)":
                             st.markdown(f"**{item_cart['nome']}**")
                             st.markdown(f"R$ {item_cart['preco']:.2f} un — **Total: R$ {subtotal:.2f}**")
                         with col_edit:
-                            nova_qtd = st.number_input("Qtd", min_value=1, max_value=30, value=item_cart['qtd'], key=f"edit_qtd_{chave}")
+                            
+                            # Recupera o estoque real do item para travar a edição no carrinho
+                            estoque_real = -1
+                            for prato in cardapio_banco:
+                                if prato['id'] == item_cart['id']:
+                                    e_val = prato.get('estoque')
+                                    if not pd.isna(e_val) and e_val is not None:
+                                        estoque_real = int(float(e_val))
+                                    break
+                                    
+                            max_value_cart = estoque_real if estoque_real != -1 else 30
+                            
+                            # Trava de segurança para carrinho já com excedente
+                            valor_atual = int(item_cart['qtd'])
+                            if valor_atual > max_value_cart:
+                                st.session_state['carrinho'][chave]['qtd'] = max_value_cart
+                                st.rerun()
+                                
+                            nova_qtd = st.number_input("Qtd", min_value=1, max_value=max_value_cart, value=valor_atual, key=f"edit_qtd_{chave}")
                             if nova_qtd != item_cart['qtd']:
                                 st.session_state['carrinho'][chave]['qtd'] = nova_qtd
                                 st.rerun()
+                                
                         with col_del:
                             st.write("") 
                             if st.button("🗑️", key=f"del_cart_{chave}"):
@@ -676,7 +728,11 @@ elif menu == "Gestão do Cardápio":
             for item in itens_da_categoria:
                 with st.container():
                     c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
-                    estoque_display = "♾️ Infinito" if item['estoque'] == -1 else f"📦 {item['estoque']} unid."
+                    
+                    estoque_val = item.get('estoque')
+                    estoque_real = -1 if pd.isna(estoque_val) or estoque_val is None else int(float(estoque_val))
+                    estoque_display = "♾️ Infinito" if estoque_real == -1 else f"📦 {estoque_real} unid."
+                    
                     c1.write(f"**{item['nome']}** | {estoque_display}")
                     c2.write(f"R$ {float(item['preco']):.2f}")
                     
@@ -697,17 +753,20 @@ elif menu == "Gestão do Cardápio":
                             
                             idx_cat = 1 if item.get('categoria') == "Bebidas" else 0
                             edit_categoria = st.selectbox("Categoria", ["Alimentos", "Bebidas"], index=idx_cat, key=f"edit_cat_{item['id']}")
-                            edit_opcoes = st.text_input("Sabores ou Variações (Separados por vírgula)", value=item.get('opcoes', '') or "")
+                            
+                            op_raw = item.get('opcoes', '')
+                            edit_opcoes = st.text_input("Sabores ou Variações (Separados por vírgula)", value=op_raw if not pd.isna(op_raw) else "")
                             edit_imagem = st.text_input("Link da Imagem", value=item['imagem'] if item['imagem'] else "")
                             
-                            has_estoque = item['estoque'] != -1
+                            has_estoque = estoque_real != -1
                             col_estoque_ed, col_qtd_ed = st.columns(2)
                             with col_estoque_ed:
                                 edit_controlar_estoque = st.checkbox("Controlar Estoque?", value=has_estoque, key=f"chk_est_{item['id']}")
                             with col_qtd_ed:
-                                edit_qtd_estoque = st.number_input("Quantidade", min_value=0, value=item['estoque'] if has_estoque else 10, step=1, disabled=not edit_controlar_estoque, key=f"qtd_est_{item['id']}")
+                                val_in_input = estoque_real if has_estoque else 10
+                                edit_qtd_estoque = st.number_input("Quantidade", min_value=0, value=val_in_input, step=1, disabled=not edit_controlar_estoque, key=f"qtd_est_{item['id']}")
                             
-                            estoque_final_edit = edit_qtd_estoque if edit_controlar_estoque else -1
+                            estoque_final_edit = int(edit_qtd_estoque) if edit_controlar_estoque else -1
 
                             if st.form_submit_button("Salvar Alterações"):
                                 if edit_nome and edit_preco > 0:
