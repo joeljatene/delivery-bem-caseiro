@@ -8,6 +8,7 @@ import streamlit.components.v1 as components
 import re
 import warnings
 import os
+from streamlit_autorefresh import st_autorefresh # <-- Ferramenta do cronômetro importada aqui
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -265,30 +266,24 @@ except Exception as e:
 # ==========================================
 # 2. CONFIGURAÇÃO E ROTEAMENTO
 # ==========================================
-st.set_page_config(page_title="Bem Caseiro Delivery", page_icon="🍲", layout="centered") # layout="centered" fica melhor em celulares
+st.set_page_config(page_title="Bem Caseiro Delivery", page_icon="🍲", layout="centered")
 
 # ==========================================
 # INJEÇÃO DE CSS: IDENTIDADE VISUAL BEM CASEIRO
 # ==========================================
 st.markdown("""
     <style>
-        /* Oculta interface padrão do Streamlit (Top menu, header e footer) */
         #MainMenu {visibility: hidden;}
         header {visibility: hidden;}
         footer {visibility: hidden;}
         
-        /* Cor de fundo mais limpa, estilo app */
-        .stApp {
-            background-color: #F7F9FC;
-        }
+        .stApp { background-color: #F7F9FC; }
 
-        /* Padroniza Títulos com o Verde Petróleo do Bem Caseiro */
         h1, h2, h3, h4, .stMarkdown p strong {
             color: #005753 !important;
             font-family: 'Helvetica Neue', sans-serif;
         }
 
-        /* Estiliza abas de navegação (Alimentos/Bebidas) */
         .stTabs [data-baseweb="tab-list"] {
             gap: 8px;
             background-color: #F7F9FC;
@@ -309,7 +304,6 @@ st.markdown("""
             border-color: #005753 !important;
         }
 
-        /* Estilo Botão Adicionar ao Carrinho (Secundário) */
         .stButton > button {
             background-color: white;
             color: #F14C14 !important;
@@ -327,7 +321,6 @@ st.markdown("""
             box-shadow: 0 4px 12px rgba(241, 76, 20, 0.2);
         }
 
-        /* Estilo Botão Principal (Finalizar Pedido) */
         button[kind="primary"] {
             background-color: #F14C14 !important;
             color: white !important;
@@ -342,7 +335,6 @@ st.markdown("""
             box-shadow: 0 6px 20px rgba(214, 62, 14, 0.4) !important;
         }
         
-        /* Container "Cards" para dar visual de catálogo/iFood */
         [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
             background-color: white;
             padding: 20px;
@@ -387,13 +379,11 @@ else:
 # ==========================================
 if menu == "Fazer Pedido (Cliente)":
     
-    # Exibe a logomarca no topo da tela do cliente
-    # (Certifique-se de fazer upload do arquivo 'logo.png' no mesmo repositório do app.py)
     col_vazia1, col_logo, col_vazia2 = st.columns([1, 2, 1])
     with col_logo:
         if os.path.exists("logo.png"):
             st.image("logo.png", width="stretch")
-        elif os.path.exists("image.png"): # Caso você mantenha o nome original
+        elif os.path.exists("image.png"): 
             st.image("image.png", width="stretch")
         else:
             st.markdown("<h1 style='text-align: center; color: #005753;'>Bem Caseiro Delivery</h1>", unsafe_allow_html=True)
@@ -717,6 +707,10 @@ elif menu == "Configurações":
 # 7. MÓDULO DA COZINHA E FINANCEIRO
 # ==========================================
 elif menu == "Painel da Cozinha / Gestão":
+    
+    # ATUALIZAÇÃO AUTOMÁTICA DA TELA DA COZINHA (A cada 15 segundos = 15000 milissegundos)
+    st_autorefresh(interval=15000, limit=None, key="atualizacao_cozinha")
+    
     st.title("📋 Painel da Cozinha")
     df_pedidos = carregar_pedidos_ativos()
     
@@ -724,14 +718,14 @@ elif menu == "Painel da Cozinha / Gestão":
     lista_nomes_motoboys = ["Não vinculado / Retirada"] + [m['nome'] for m in motoboys_ativos]
 
     if df_pedidos.empty:
-        st.info("A cozinha está limpa!")
+        st.info("A cozinha está limpa! Aguardando novos pedidos...")
     else:
         tem_novo = any(df_pedidos['status'] == 'Novo')
         status_alarme = get_config('alarme_sonoro')
         
         if tem_novo:
             if status_alarme == 'ativado':
-                st.error("🔔 **NOVO PEDIDO RECEBIDO!** (Clique na tela para liberar o áudio).")
+                st.error("🔔 **NOVO PEDIDO RECEBIDO!**")
                 alerta_html = """
                     <audio id="alarme_bemcaseiro" autoplay loop>
                         <source src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=success-1-6297.mp3" type="audio/mpeg">
@@ -757,7 +751,7 @@ elif menu == "Painel da Cozinha / Gestão":
                 cor_texto = "black"
                 emoji = "🟡"
             elif status_atual == 'Saiu para Entrega':
-                cor_fundo = "#00C853" 
+                cor_fundo = "#005753" # Verde da marca
                 cor_texto = "white"
                 emoji = "🟢"
             else:
