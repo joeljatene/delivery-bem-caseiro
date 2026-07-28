@@ -7,6 +7,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import re
 import warnings
+import os
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -40,7 +41,6 @@ def inicializar_banco():
     conn = get_conexao()
     c = conn.cursor()
     
-    # 1. Pedidos
     c.execute('''
         CREATE TABLE IF NOT EXISTS pedidos (
             id SERIAL PRIMARY KEY,
@@ -52,7 +52,8 @@ def inicializar_banco():
             total NUMERIC,
             pagamento TEXT,
             status TEXT,
-            taxa_entrega NUMERIC
+            taxa_entrega NUMERIC,
+            motoboy TEXT
         )
     ''')
     
@@ -60,7 +61,6 @@ def inicializar_banco():
     if not c.fetchone():
         c.execute("ALTER TABLE pedidos ADD COLUMN motoboy TEXT")
     
-    # 2. Cardápio
     c.execute('''
         CREATE TABLE IF NOT EXISTS cardapio (
             id SERIAL PRIMARY KEY,
@@ -81,7 +81,6 @@ def inicializar_banco():
         ]
         c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria) VALUES (%s, %s, %s, %s, %s)", itens_iniciais)
 
-    # 3. Clientes
     c.execute('''
         CREATE TABLE IF NOT EXISTS clientes (
             telefone TEXT PRIMARY KEY,
@@ -91,7 +90,6 @@ def inicializar_banco():
         )
     ''')
     
-    # 4. Motoboys
     c.execute('''
         CREATE TABLE IF NOT EXISTS motoboys (
             id SERIAL PRIMARY KEY,
@@ -101,7 +99,6 @@ def inicializar_banco():
         )
     ''')
 
-    # 5. Configurações do Sistema
     c.execute('''
         CREATE TABLE IF NOT EXISTS configuracoes (
             chave TEXT PRIMARY KEY,
@@ -115,7 +112,6 @@ def inicializar_banco():
     conn.commit()
     conn.close()
 
-# Funções de Configuração
 def get_config(chave):
     conn = get_conexao()
     c = conn.cursor()
@@ -131,7 +127,6 @@ def set_config(chave, valor):
     conn.commit()
     conn.close()
 
-# Funções de Clientes
 def buscar_cliente(telefone):
     conn = get_conexao()
     c = conn.cursor()
@@ -151,7 +146,6 @@ def salvar_cliente(telefone, nome, bairro, endereco_rua):
     conn.commit()
     conn.close()
 
-# Funções de Pedidos
 def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, taxa_entrega):
     conn = get_conexao()
     c = conn.cursor()
@@ -196,7 +190,6 @@ def carregar_vendas_concluidas():
     conn.close()
     return df
 
-# Funções de Cardápio
 def carregar_cardapio_completo():
     conn = get_conexao()
     try:
@@ -234,7 +227,6 @@ def editar_prato(prato_id, nome, preco, imagem, categoria):
     conn.commit()
     conn.close()
 
-# Funções de Motoboys
 def carregar_motoboys(ativos_apenas=False):
     conn = get_conexao()
     if ativos_apenas:
@@ -273,7 +265,95 @@ except Exception as e:
 # ==========================================
 # 2. CONFIGURAÇÃO E ROTEAMENTO
 # ==========================================
-st.set_page_config(page_title="Bem Caseiro Delivery", page_icon="🍲", layout="wide")
+st.set_page_config(page_title="Bem Caseiro Delivery", page_icon="🍲", layout="centered") # layout="centered" fica melhor em celulares
+
+# ==========================================
+# INJEÇÃO DE CSS: IDENTIDADE VISUAL BEM CASEIRO
+# ==========================================
+st.markdown("""
+    <style>
+        /* Oculta interface padrão do Streamlit (Top menu, header e footer) */
+        #MainMenu {visibility: hidden;}
+        header {visibility: hidden;}
+        footer {visibility: hidden;}
+        
+        /* Cor de fundo mais limpa, estilo app */
+        .stApp {
+            background-color: #F7F9FC;
+        }
+
+        /* Padroniza Títulos com o Verde Petróleo do Bem Caseiro */
+        h1, h2, h3, h4, .stMarkdown p strong {
+            color: #005753 !important;
+            font-family: 'Helvetica Neue', sans-serif;
+        }
+
+        /* Estiliza abas de navegação (Alimentos/Bebidas) */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 8px;
+            background-color: #F7F9FC;
+            padding-bottom: 5px;
+        }
+        .stTabs [data-baseweb="tab"] {
+            background-color: white;
+            border-radius: 12px 12px 0 0;
+            padding: 10px 24px;
+            border: 1px solid #E0E6ED;
+            border-bottom: none;
+            color: #005753;
+            font-weight: 600;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #005753 !important;
+            color: white !important;
+            border-color: #005753 !important;
+        }
+
+        /* Estilo Botão Adicionar ao Carrinho (Secundário) */
+        .stButton > button {
+            background-color: white;
+            color: #F14C14 !important;
+            border: 2px solid #F14C14 !important;
+            border-radius: 12px !important;
+            font-weight: 700 !important;
+            padding: 8px 16px !important;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+        .stButton > button:hover {
+            background-color: #F14C14 !important;
+            color: white !important;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(241, 76, 20, 0.2);
+        }
+
+        /* Estilo Botão Principal (Finalizar Pedido) */
+        button[kind="primary"] {
+            background-color: #F14C14 !important;
+            color: white !important;
+            border: none !important;
+            border-radius: 12px !important;
+            padding: 20px !important;
+            font-size: 18px !important;
+            box-shadow: 0 4px 15px rgba(241, 76, 20, 0.3) !important;
+        }
+        button[kind="primary"]:hover {
+            background-color: #D63E0E !important;
+            box-shadow: 0 6px 20px rgba(214, 62, 14, 0.4) !important;
+        }
+        
+        /* Container "Cards" para dar visual de catálogo/iFood */
+        [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
+            background-color: white;
+            padding: 20px;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+            margin-bottom: 12px;
+            border: 1px solid #F0F2F5;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 
 is_admin = st.query_params.get("admin") == "sim"
 
@@ -306,8 +386,19 @@ else:
 # 3. MÓDULO DO CLIENTE (CARDÁPIO)
 # ==========================================
 if menu == "Fazer Pedido (Cliente)":
-    st.title("🍽️ Bem Caseiro - Faça o seu Pedido")
-    st.subheader("Nosso Cardápio:")
+    
+    # Exibe a logomarca no topo da tela do cliente
+    # (Certifique-se de fazer upload do arquivo 'logo.png' no mesmo repositório do app.py)
+    col_vazia1, col_logo, col_vazia2 = st.columns([1, 2, 1])
+    with col_logo:
+        if os.path.exists("logo.png"):
+            st.image("logo.png", width="stretch")
+        elif os.path.exists("image.png"): # Caso você mantenha o nome original
+            st.image("image.png", width="stretch")
+        else:
+            st.markdown("<h1 style='text-align: center; color: #005753;'>Bem Caseiro Delivery</h1>", unsafe_allow_html=True)
+
+    st.markdown("<h3 style='text-align: center;'>Faça o seu Pedido</h3>", unsafe_allow_html=True)
 
     try:
         cardapio_banco = carregar_cardapio_completo()
@@ -322,17 +413,17 @@ if menu == "Fazer Pedido (Cliente)":
                 for item in itens_disponiveis:
                     if item.get("categoria", "Alimentos") != "Bebidas":
                         with st.container():
-                            col_img, col_desc, col_add = st.columns([1, 3, 1.5])
+                            col_img, col_desc, col_add = st.columns([1.5, 3, 2])
                             with col_img:
                                 if item.get("imagem"):
                                     st.image(item["imagem"], width="stretch") 
                             with col_desc:
                                 st.markdown(f"**{item['nome']}**")
-                                st.markdown(f"R$ {float(item['preco']):.2f}")
-                                obs_alim = st.text_input("Observação (opcional):", placeholder="Ex: sem cebola", key=f"obs_alim_{item['id']}")
+                                st.markdown(f"<span style='color: #005753; font-weight: bold; font-size: 16px;'>R$ {float(item['preco']):.2f}</span>", unsafe_allow_html=True)
+                                obs_alim = st.text_input("Obs:", placeholder="Ex: sem cebola", key=f"obs_alim_{item['id']}")
                             with col_add:
                                 qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_{item['id']}")
-                                if st.button("➕ Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
+                                if st.button("Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
                                     nome_final = f"{item['nome']} [Obs: {obs_alim}]" if obs_alim else item['nome']
                                     chave_item = f"{item['id']}_{obs_alim}"
                                     
@@ -346,19 +437,18 @@ if menu == "Fazer Pedido (Cliente)":
                                             "qtd": qtd_desejada
                                         }
                                     st.toast(f"{qtd_desejada}x {item['nome']} adicionado ao carrinho!", icon="✅")
-                        st.divider()
 
             with aba_bebidas:
                 for item in itens_disponiveis:
                     if item.get("categoria") == "Bebidas":
                         with st.container():
-                            col_img, col_desc, col_add = st.columns([1, 3, 1.5])
+                            col_img, col_desc, col_add = st.columns([1.5, 3, 2])
                             with col_img:
                                 if item.get("imagem"):
                                     st.image(item["imagem"], width="stretch") 
                             with col_desc:
                                 st.markdown(f"**{item['nome']}**")
-                                st.markdown(f"R$ {float(item['preco']):.2f}")
+                                st.markdown(f"<span style='color: #005753; font-weight: bold; font-size: 16px;'>R$ {float(item['preco']):.2f}</span>", unsafe_allow_html=True)
                                 
                                 sabor = ""
                                 if "Suco" in item['nome']:
@@ -366,11 +456,11 @@ if menu == "Fazer Pedido (Cliente)":
                                 elif "Refrigerante" in item['nome']:
                                     sabor = st.selectbox("Opção:", ["Coca-Cola", "Guaraná Antarctica", "Fanta Laranja", "Sprite", "Coca-Cola Zero"], key=f"sabor_{item['id']}")
                                 
-                                obs_beb = st.text_input("Observação (opcional):", placeholder="Ex: sem açúcar", key=f"obs_beb_{item['id']}")
+                                obs_beb = st.text_input("Obs:", placeholder="Ex: sem açúcar", key=f"obs_beb_{item['id']}")
                                 
                             with col_add:
                                 qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_beb_{item['id']}")
-                                if st.button("➕ Adicionar", key=f"btn_add_beb_{item['id']}", use_container_width=True):
+                                if st.button("Adicionar", key=f"btn_add_beb_{item['id']}", use_container_width=True):
                                     nome_com_sabor = f"{item['nome']} ({sabor})" if sabor else item['nome']
                                     nome_final = f"{nome_com_sabor} [Obs: {obs_beb}]" if obs_beb else nome_com_sabor
                                     chave_item = f"{item['id']}_{sabor}_{obs_beb}"
@@ -385,10 +475,9 @@ if menu == "Fazer Pedido (Cliente)":
                                             "qtd": qtd_desejada
                                         }
                                     st.toast(f"{qtd_desejada}x {nome_com_sabor} adicionado ao carrinho!", icon="✅")
-                        st.divider()
 
             if len(st.session_state['carrinho']) > 0:
-                st.subheader("🛒 Resumo e Conferência do Pedido")
+                st.subheader("🛒 Resumo do Pedido")
                 
                 total_itens = 0.0
                 carrinho_formatado_para_banco = []
@@ -405,26 +494,26 @@ if menu == "Fazer Pedido (Cliente)":
                         "subtotal": subtotal
                     })
 
-                    col_nome, col_edit, col_del = st.columns([3, 1.5, 1])
-                    with col_nome:
-                        st.markdown(f"**{item_cart['nome']}**")
-                        st.markdown(f"R$ {item_cart['preco']:.2f} cada — **Subtotal: R$ {subtotal:.2f}**")
-                    with col_edit:
-                        nova_qtd = st.number_input("Editar Qtd", min_value=1, max_value=30, value=item_cart['qtd'], key=f"edit_qtd_{chave}")
-                        if nova_qtd != item_cart['qtd']:
-                            st.session_state['carrinho'][chave]['qtd'] = nova_qtd
-                            st.rerun()
-                    with col_del:
-                        st.write("") 
-                        if st.button("🗑️ Excluir", key=f"del_cart_{chave}"):
-                            del st.session_state['carrinho'][chave]
-                            st.rerun()
+                    with st.container():
+                        col_nome, col_edit, col_del = st.columns([3, 1.5, 1])
+                        with col_nome:
+                            st.markdown(f"**{item_cart['nome']}**")
+                            st.markdown(f"R$ {item_cart['preco']:.2f} un — **Total: R$ {subtotal:.2f}**")
+                        with col_edit:
+                            nova_qtd = st.number_input("Qtd", min_value=1, max_value=30, value=item_cart['qtd'], key=f"edit_qtd_{chave}")
+                            if nova_qtd != item_cart['qtd']:
+                                st.session_state['carrinho'][chave]['qtd'] = nova_qtd
+                                st.rerun()
+                        with col_del:
+                            st.write("") 
+                            if st.button("🗑️", key=f"del_cart_{chave}"):
+                                del st.session_state['carrinho'][chave]
+                                st.rerun()
                             
-                st.write("---")
-                st.markdown(f"### 💰 Subtotal dos itens: R$ {total_itens:.2f}")
+                st.markdown(f"<h3 style='text-align: right;'>Subtotal: R$ {total_itens:.2f}</h3>", unsafe_allow_html=True)
                 st.write("---")
 
-                st.subheader("🛵 Dados para Entrega")
+                st.subheader("🛵 Entrega e Pagamento")
                 telefone_input = st.text_input("Seu WhatsApp (Digite apenas números e clique fora)", placeholder="Ex: 95999999999")
                 
                 cli_nome = ""
@@ -437,12 +526,10 @@ if menu == "Fazer Pedido (Cliente)":
                     if len(telefone_limpo) >= 10:
                         cliente_dados = buscar_cliente(telefone_limpo)
                         if cliente_dados:
-                            st.success("👋 Encontramos seu cadastro! Preenchemos seus dados para adiantar.")
+                            st.success("👋 Bem-vindo de volta! Preenchemos seus dados.")
                             cli_nome = cliente_dados[0]
                             cli_bairro = cliente_dados[1] if cliente_dados[1] in TAXAS_ENTREGA else "Centro"
                             cli_rua = cliente_dados[2]
-                        else:
-                            st.info("Primeira vez por aqui? Preencha os dados abaixo que já deixaremos salvo para a próxima.")
                     else:
                         st.warning("Digite o telefone completo com o DDD.")
 
@@ -455,13 +542,13 @@ if menu == "Fazer Pedido (Cliente)":
                         bairro_selecionado = st.selectbox("Bairro", list(TAXAS_ENTREGA.keys()), index=idx_bairro)
                         
                     with col_rua:
-                        endereco_rua = st.text_input("Rua, Número e Ponto de Referência", value=cli_rua)
+                        endereco_rua = st.text_input("Rua, Número e Referência", value=cli_rua)
 
                     pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
                     troco = st.text_input("Troco para quanto? (Se for dinheiro)")
 
                     st.write("") 
-                    enviar = st.form_submit_button("Confirmar Pedido e Enviar para o WhatsApp", type="primary", use_container_width=True)
+                    enviar = st.form_submit_button("Finalizar Pedido via WhatsApp", type="primary", use_container_width=True)
 
                     if enviar:
                         if telefone_limpo and nome_cliente and carrinho_formatado_para_banco and (endereco_rua or bairro_selecionado == "Retirar no Local"):
@@ -493,14 +580,14 @@ if menu == "Fazer Pedido (Cliente)":
 
                             st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
                             st.markdown(
-                                f'<a href="{link_whatsapp}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 16px; border-radius: 5px;">📱 Enviar Pedido por WhatsApp</a>',
+                                f'<a href="{link_whatsapp}" target="_blank" style="display: block; padding: 15px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 18px; font-weight: bold; border-radius: 12px; margin-top: 15px;">📱 Enviar Pedido para o Restaurante</a>',
                                 unsafe_allow_html=True
                             )
                         else:
-                            st.error("Por favor, informe seu WhatsApp, Nome, e informe o endereço.")
+                            st.error("Por favor, preencha os dados de entrega obrigatórios.")
 
     except Exception as e:
-        st.error(f"Erro ao carregar cardápio. O banco de dados não está respondendo corretamente: {e}")
+        st.error(f"Erro de comunicação com o sistema: {e}")
 
 # ==========================================
 # 4. GESTÃO DO CARDÁPIO
@@ -542,7 +629,7 @@ elif menu == "Gestão do Cardápio":
                     atualizar_disponibilidade(item['id'], int(toggle_ativo))
                     st.rerun()
                     
-                if c4.button("🗑️ Excluir", key=f"del_{item['id']}"):
+                if c4.button("🗑️", key=f"del_{item['id']}"):
                     excluir_prato(item['id'])
                     st.rerun()
                 
@@ -562,7 +649,6 @@ elif menu == "Gestão do Cardápio":
                                 editar_prato(item['id'], edit_nome, edit_preco, edit_imagem, edit_categoria)
                                 st.success("Atualizado!")
                                 st.rerun()
-            st.divider()
 
 # ==========================================
 # 5. GESTÃO DE MOTOBOYS
@@ -602,10 +688,9 @@ elif menu == "Gestão de Motoboys":
                     alternar_status_motoboy(moto['id'], int(toggle_ativo))
                     st.rerun()
                     
-                if c4.button("🗑️ Excluir", key=f"del_moto_{moto['id']}"):
+                if c4.button("🗑️", key=f"del_moto_{moto['id']}"):
                     excluir_motoboy(moto['id'])
                     st.rerun()
-            st.divider()
 
 # ==========================================
 # 6. CONFIGURAÇÕES DO SISTEMA
@@ -632,7 +717,7 @@ elif menu == "Configurações":
 # 7. MÓDULO DA COZINHA E FINANCEIRO
 # ==========================================
 elif menu == "Painel da Cozinha / Gestão":
-    st.title("📋 Painel de Controle de Pedidos")
+    st.title("📋 Painel da Cozinha")
     df_pedidos = carregar_pedidos_ativos()
     
     motoboys_ativos = carregar_motoboys(ativos_apenas=True)
@@ -641,13 +726,12 @@ elif menu == "Painel da Cozinha / Gestão":
     if df_pedidos.empty:
         st.info("A cozinha está limpa!")
     else:
-        # VERIFICA O ALARME SONORO
         tem_novo = any(df_pedidos['status'] == 'Novo')
         status_alarme = get_config('alarme_sonoro')
         
         if tem_novo:
             if status_alarme == 'ativado':
-                st.error("🔔 **NOVO PEDIDO RECEBIDO!** (Se o som não tocou, clique na tela para liberar o áudio).")
+                st.error("🔔 **NOVO PEDIDO RECEBIDO!** (Clique na tela para liberar o áudio).")
                 alerta_html = """
                     <audio id="alarme_bemcaseiro" autoplay loop>
                         <source src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=success-1-6297.mp3" type="audio/mpeg">
@@ -660,23 +744,20 @@ elif menu == "Painel da Cozinha / Gestão":
                     </script>
                 """
                 components.html(alerta_html, width=0, height=0)
-            else:
-                st.warning("🔔 **NOVO PEDIDO RECEBIDO!** (O alarme sonoro está desativado nas Configurações).")
 
         for index, row in df_pedidos.iterrows():
             
-            # DEFINIÇÃO DE CORES E EMOJIS BASEADO NO STATUS
             status_atual = row['status']
             if status_atual == 'Novo':
-                cor_fundo = "#FF4B4B" # Vermelho
+                cor_fundo = "#FF4B4B" 
                 cor_texto = "white"
                 emoji = "🔴"
             elif status_atual == 'Em Produção':
-                cor_fundo = "#FFA500" # Laranja
+                cor_fundo = "#FFA500" 
                 cor_texto = "black"
                 emoji = "🟡"
             elif status_atual == 'Saiu para Entrega':
-                cor_fundo = "#00C853" # Verde
+                cor_fundo = "#00C853" 
                 cor_texto = "white"
                 emoji = "🟢"
             else:
@@ -687,7 +768,6 @@ elif menu == "Painel da Cozinha / Gestão":
             titulo_expander = f"{emoji} Pedido #{row['id']} — {row['cliente']} — {status_atual.upper()}"
             
             with st.expander(titulo_expander, expanded=True):
-                # TARJA COLORIDA DE STATUS
                 st.markdown(f"<div style='background-color: {cor_fundo}; color: {cor_texto}; padding: 8px; border-radius: 5px; text-align: center; font-weight: bold; font-size: 16px; margin-bottom: 15px;'>STATUS: {status_atual.upper()}</div>", unsafe_allow_html=True)
                 
                 telefone_exibicao = row.get('telefone', '')
@@ -701,7 +781,7 @@ elif menu == "Painel da Cozinha / Gestão":
                     st.text(f"- {i['qtd']}x {i['nome']} (R$ {float(i['subtotal']):.2f})")
                 
                 taxa = float(row.get('taxa_entrega', 0.0))
-                st.markdown(f"**Total (com R$ {taxa:.2f} frete): R$ {float(row['total']):.2f}**")
+                st.markdown(f"**Total (com frete): R$ {float(row['total']):.2f}**")
 
                 tel_cliente = re.sub(r'\D', '', str(row.get('telefone', '')))
                 if len(tel_cliente) >= 10:
@@ -719,7 +799,7 @@ elif menu == "Painel da Cozinha / Gestão":
                         msg_codificada = urllib.parse.quote(msg_atual)
                         link_wa_status = f"https://wa.me/{tel_cliente}?text={msg_codificada}"
                         st.markdown(
-                            f'<a href="{link_wa_status}" target="_blank" style="display: inline-block; margin-bottom: 15px; padding: 6px 12px; background-color: #f0f2f6; color: #31333F; border: 1px solid #dcdce1; text-align: center; text-decoration: none; font-size: 14px; border-radius: 5px;">📲 Notificar Cliente no WhatsApp</a>',
+                            f'<a href="{link_wa_status}" target="_blank" style="display: block; margin-bottom: 15px; padding: 10px; background-color: #25D366; color: white; font-weight: bold; text-align: center; text-decoration: none; border-radius: 8px;">📲 Notificar Cliente no WhatsApp</a>',
                             unsafe_allow_html=True
                         )
 
@@ -766,10 +846,10 @@ elif menu == "Painel da Cozinha / Gestão":
                 motoboy_selecionado = st.selectbox("Vincular Motoboy para Entrega:", lista_nomes_motoboys, key=f"sel_moto_{row['id']}")
 
                 col1, col2, col3, col4 = st.columns(4)
-                if col1.button("Em Produção", key=f"prod_{row['id']}"):
+                if col1.button("Produção", key=f"prod_{row['id']}"):
                     atualizar_status_pedido(row['id'], "Em Produção", motoboy_selecionado)
                     st.rerun()
-                if col2.button("Saiu para Entrega", key=f"ent_{row['id']}"):
+                if col2.button("Entrega", key=f"ent_{row['id']}"):
                     atualizar_status_pedido(row['id'], "Saiu para Entrega", motoboy_selecionado)
                     st.rerun()
                 if col3.button("✅ Concluir", key=f"conc_{row['id']}"):
@@ -780,7 +860,7 @@ elif menu == "Painel da Cozinha / Gestão":
                     st.rerun()
 
 elif menu == "Relatório Financeiro":
-    st.title("📊 Relatório Financeiro e Fechamento")
+    st.title("📊 Relatório Financeiro")
     df_vendas = carregar_vendas_concluidas()
 
     if df_vendas.empty:
@@ -856,8 +936,3 @@ elif menu == "Relatório Financeiro":
                 mime="text/csv",
                 type="primary"
             )
-
-            st.divider()
-            st.subheader("📈 Receita por Forma de Pagamento")
-            receita_por_pagamento = df_vendas_filtrado.groupby('pagamento')['total'].sum().reset_index()
-            st.bar_chart(data=receita_por_pagamento.set_index('pagamento'))
