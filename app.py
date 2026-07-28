@@ -66,6 +66,10 @@ def inicializar_banco():
         )
     ''')
     
+    c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='pedidos' AND column_name='motoboy'")
+    if not c.fetchone():
+        c.execute("ALTER TABLE pedidos ADD COLUMN motoboy TEXT")
+    
     # Tabela Cardápio
     c.execute('''
         CREATE TABLE IF NOT EXISTS cardapio (
@@ -75,14 +79,28 @@ def inicializar_banco():
             disponivel INTEGER,
             imagem TEXT,
             categoria TEXT DEFAULT 'Alimentos',
-            estoque INTEGER DEFAULT -1
+            estoque INTEGER DEFAULT -1,
+            opcoes TEXT DEFAULT ''
         )
     ''')
     
     c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='cardapio' AND column_name='estoque'")
     if not c.fetchone():
         c.execute("ALTER TABLE cardapio ADD COLUMN estoque INTEGER DEFAULT -1")
+        
+    c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='cardapio' AND column_name='opcoes'")
+    if not c.fetchone():
+        c.execute("ALTER TABLE cardapio ADD COLUMN opcoes TEXT DEFAULT ''")
     
+    c.execute("SELECT COUNT(*) FROM cardapio")
+    if c.fetchone()[0] == 0:
+        itens_iniciais = [
+            ("Marmita Executiva Tradicional", 22.00, 1, "https://images.unsplash.com/photo-1628296939923-d64e9a6e35cb?w=300&q=80", "Alimentos", -1, ""),
+            ("Prato Feito Especial", 28.00, 1, "https://images.unsplash.com/photo-1645696301019-35adcc18fc21?w=300&q=80", "Alimentos", -1, ""),
+            ("Refrigerante Lata", 6.00, 1, "https://images.unsplash.com/photo-1622597467836-f38240662c8b?w=300&q=80", "Bebidas", -1, "Coca-Cola, Guaraná, Fanta")
+        ]
+        c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria, estoque, opcoes) VALUES (%s, %s, %s, %s, %s, %s, %s)", itens_iniciais)
+
     # Tabela Clientes
     c.execute('''
         CREATE TABLE IF NOT EXISTS clientes (
@@ -104,6 +122,10 @@ def inicializar_banco():
         )
     ''')
     
+    c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='motoboys' AND column_name='senha'")
+    if not c.fetchone():
+        c.execute("ALTER TABLE motoboys ADD COLUMN senha TEXT")
+
     # Tabela Configurações
     c.execute('''
         CREATE TABLE IF NOT EXISTS configuracoes (
@@ -115,9 +137,7 @@ def inicializar_banco():
     config_iniciais = [
         ('alarme_sonoro', 'ativado'), 
         ('loja_aberta', 'ativado'), 
-        ('horario_auto', 'ativado'),
-        ('sabores_suco', 'Laranja,Limão,Maracujá,Goiaba,Cupuaçu'),
-        ('opcoes_refri', 'Coca-Cola,Guaraná Antarctica,Fanta Laranja,Sprite,Coca-Cola Zero')
+        ('horario_auto', 'ativado')
     ]
     for chave, valor in config_iniciais:
         c.execute("SELECT valor FROM configuracoes WHERE chave = %s", (chave,))
@@ -171,14 +191,12 @@ def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, tax
     data_hora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     itens_json = json.dumps(itens)
     
-    # Salva o pedido
     c.execute('''
         INSERT INTO pedidos (data_hora, cliente, telefone, endereco, itens, total, pagamento, status, taxa_entrega)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
     ''', (data_hora, cliente, telefone, endereco, itens_json, total, pagamento, 'Novo', taxa_entrega))
     pedido_id = c.fetchone()[0]
     
-    # Atualiza o estoque (-1 significa infinito)
     for item in itens:
         item_id = item.get('id')
         qtd = item.get('qtd', 1)
@@ -191,7 +209,10 @@ def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, tax
 
 def carregar_pedidos_ativos():
     conn = get_conexao()
-    df = pd.read_sql_query("SELECT id, data_hora, cliente, telefone, endereco, itens, total, pagamento, status, taxa_entrega, motoboy FROM pedidos WHERE status NOT IN ('Concluído', 'Cancelado') ORDER BY id ASC", conn)
+    try:
+        df = pd.read_sql_query("SELECT id, data_hora, cliente, telefone, endereco, itens, total, pagamento, status, taxa_entrega, motoboy FROM pedidos WHERE status NOT IN ('Concluído', 'Cancelado') ORDER BY id ASC", conn)
+    except:
+        df = pd.read_sql_query("SELECT *, '' as motoboy FROM pedidos WHERE status NOT IN ('Concluído', 'Cancelado') ORDER BY id ASC", conn)
     conn.close()
     return df
 
@@ -207,20 +228,27 @@ def atualizar_status_pedido(pedido_id, novo_status, motoboy=None):
 
 def carregar_vendas_concluidas():
     conn = get_conexao()
-    df = pd.read_sql_query("SELECT id, data_hora, cliente, telefone, endereco, itens, total, pagamento, status, taxa_entrega, motoboy FROM pedidos WHERE status = 'Concluído'", conn)
+    try:
+        df = pd.read_sql_query("SELECT id, data_hora, cliente, telefone, endereco, itens, total, pagamento, status, taxa_entrega, motoboy FROM pedidos WHERE status = 'Concluído'", conn)
+    except:
+        df = pd.read_sql_query("SELECT *, '' as motoboy FROM pedidos WHERE status = 'Concluído'", conn)
     conn.close()
     return df
 
 def carregar_cardapio_completo():
     conn = get_conexao()
-    df = pd.read_sql_query("SELECT id, nome, preco, disponivel, imagem, categoria, estoque FROM cardapio ORDER BY disponivel DESC, categoria ASC, nome ASC", conn)
+    try:
+        df = pd.read_sql_query("SELECT id, nome, preco, disponivel, imagem, categoria, estoque, opcoes FROM cardapio ORDER BY disponivel DESC, categoria ASC, nome ASC", conn)
+    except:
+        # Fallback de segurança se falhar na atualização em tempo real
+        df = pd.read_sql_query("SELECT *, 'Alimentos' as categoria, -1 as estoque, '' as opcoes FROM cardapio ORDER BY disponivel DESC, id ASC", conn)
     conn.close()
     return df.to_dict('records')
 
-def adicionar_prato(nome, preco, imagem, categoria, estoque):
+def adicionar_prato(nome, preco, imagem, categoria, estoque, opcoes):
     conn = get_conexao()
     c = conn.cursor()
-    c.execute("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria, estoque) VALUES (%s, %s, 1, %s, %s, %s)", (nome, preco, imagem, categoria, estoque))
+    c.execute("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria, estoque, opcoes) VALUES (%s, %s, 1, %s, %s, %s, %s)", (nome, preco, imagem, categoria, estoque, opcoes))
     conn.commit()
     conn.close()
 
@@ -238,10 +266,10 @@ def excluir_prato(prato_id):
     conn.commit()
     conn.close()
 
-def editar_prato(prato_id, nome, preco, imagem, categoria, estoque):
+def editar_prato(prato_id, nome, preco, imagem, categoria, estoque, opcoes):
     conn = get_conexao()
     c = conn.cursor()
-    c.execute("UPDATE cardapio SET nome = %s, preco = %s, imagem = %s, categoria = %s, estoque = %s WHERE id = %s", (nome, preco, imagem, categoria, estoque, prato_id))
+    c.execute("UPDATE cardapio SET nome = %s, preco = %s, imagem = %s, categoria = %s, estoque = %s, opcoes = %s WHERE id = %s", (nome, preco, imagem, categoria, estoque, opcoes, prato_id))
     conn.commit()
     conn.close()
 
@@ -387,53 +415,19 @@ if menu == "Fazer Pedido (Cliente)":
         cardapio_banco = carregar_cardapio_completo()
         itens_disponiveis = [item for item in cardapio_banco if item['disponivel'] == 1]
         
-        # Carrega os sabores do BD
-        sabores_suco_bd = get_config('sabores_suco', 'Laranja,Limão,Maracujá,Goiaba,Cupuaçu').split(',')
-        sabores_suco = [s.strip() for s in sabores_suco_bd if s.strip()]
-        opcoes_refri_bd = get_config('opcoes_refri', 'Coca-Cola,Guaraná Antarctica,Fanta Laranja,Sprite,Coca-Cola Zero').split(',')
-        opcoes_refri = [s.strip() for s in opcoes_refri_bd if s.strip()]
-        
         if not itens_disponiveis:
             st.warning("Nosso cardápio está sendo atualizado no momento. Volte em alguns minutos!")
         else:
             aba_alimentos, aba_bebidas = st.tabs(["🍽️ Alimentos", "🥤 Bebidas"])
 
-            with aba_alimentos:
+            # Função auxiliar para desenhar itens para evitar código repetido nas abas
+            def renderizar_itens(categoria_filtro):
                 for item in itens_disponiveis:
-                    if item.get("categoria", "Alimentos") != "Bebidas":
+                    eh_esta_categoria = (item.get("categoria", "Alimentos") == "Bebidas") if categoria_filtro == "Bebidas" else (item.get("categoria", "Alimentos") != "Bebidas")
+                    
+                    if eh_esta_categoria:
                         esgotado = (item.get('estoque', -1) == 0)
-                        
-                        with st.container():
-                            col_img, col_desc, col_add = st.columns([1.5, 3, 2])
-                            with col_img:
-                                if item.get("imagem"): st.image(item["imagem"], width="stretch") 
-                            with col_desc:
-                                st.markdown(f"**{item['nome']}**")
-                                st.markdown(f"<span style='color: #005753; font-weight: bold; font-size: 16px;'>R$ {float(item['preco']):.2f}</span>", unsafe_allow_html=True)
-                                if esgotado:
-                                    st.markdown("<div class='esgotado-badge'>ESGOTADO HOJE</div>", unsafe_allow_html=True)
-                                else:
-                                    obs_alim = st.text_input("Obs:", placeholder="Ex: sem cebola", key=f"obs_alim_{item['id']}")
-                            with col_add:
-                                if not esgotado:
-                                    max_qtd = item.get('estoque', 20) if item.get('estoque', -1) > 0 else 20
-                                    qtd_desejada = st.number_input("Qtd", min_value=1, max_value=max_qtd, value=1, key=f"qtd_item_{item['id']}")
-                                    if loja_aberta:
-                                        if st.button("Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
-                                            nome_final = f"{item['nome']} [Obs: {obs_alim}]" if obs_alim else item['nome']
-                                            chave_item = f"{item['id']}_{obs_alim}"
-                                            if chave_item in st.session_state['carrinho']: st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
-                                            else: st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
-                                            st.toast(f"{qtd_desejada}x {item['nome']} adicionado!", icon="✅")
-                                    else:
-                                        st.button("Fechado", key=f"btn_add_{item['id']}", disabled=True, use_container_width=True)
-                                else:
-                                    st.button("Esgotado", key=f"btn_add_{item['id']}", disabled=True, use_container_width=True)
-
-            with aba_bebidas:
-                for item in itens_disponiveis:
-                    if item.get("categoria") == "Bebidas":
-                        esgotado = (item.get('estoque', -1) == 0)
+                        opcoes_lista = [o.strip() for o in str(item.get('opcoes', '')).split(',') if o.strip()]
                         
                         with st.container():
                             col_img, col_desc, col_add = st.columns([1.5, 3, 2])
@@ -443,32 +437,42 @@ if menu == "Fazer Pedido (Cliente)":
                                 st.markdown(f"**{item['nome']}**")
                                 st.markdown(f"<span style='color: #005753; font-weight: bold; font-size: 16px;'>R$ {float(item['preco']):.2f}</span>", unsafe_allow_html=True)
                                 
-                                sabor = ""
+                                sabor_selecionado = ""
                                 if not esgotado:
-                                    if "Suco" in item['nome'] and sabores_suco: 
-                                        sabor = st.selectbox("Sabor:", sabores_suco, key=f"sabor_{item['id']}")
-                                    elif "Refrigerante" in item['nome'] and opcoes_refri: 
-                                        sabor = st.selectbox("Opção:", opcoes_refri, key=f"sabor_{item['id']}")
-                                    obs_beb = st.text_input("Obs:", placeholder="Ex: sem açúcar", key=f"obs_beb_{item['id']}")
+                                    if opcoes_lista:
+                                        sabor_selecionado = st.selectbox("Opções/Sabores:", opcoes_lista, key=f"sabor_{item['id']}")
+                                    
+                                    obs_input = st.text_input("Observações:", placeholder="Ex: sem açúcar, sem cebola", key=f"obs_{item['id']}")
                                 else:
                                     st.markdown("<div class='esgotado-badge'>ESGOTADO HOJE</div>", unsafe_allow_html=True)
                                     
                             with col_add:
                                 if not esgotado:
                                     max_qtd = item.get('estoque', 20) if item.get('estoque', -1) > 0 else 20
-                                    qtd_desejada = st.number_input("Qtd", min_value=1, max_value=max_qtd, value=1, key=f"qtd_item_beb_{item['id']}")
+                                    qtd_desejada = st.number_input("Qtd", min_value=1, max_value=max_qtd, value=1, key=f"qtd_item_{item['id']}")
+                                    
                                     if loja_aberta:
-                                        if st.button("Adicionar", key=f"btn_add_beb_{item['id']}", use_container_width=True):
-                                            nome_com_sabor = f"{item['nome']} ({sabor})" if sabor else item['nome']
-                                            nome_final = f"{nome_com_sabor} [Obs: {obs_beb}]" if obs_beb else nome_com_sabor
-                                            chave_item = f"{item['id']}_{sabor}_{obs_beb}"
-                                            if chave_item in st.session_state['carrinho']: st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
-                                            else: st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
-                                            st.toast(f"{qtd_desejada}x {nome_com_sabor} adicionado!", icon="✅")
+                                        if st.button("Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
+                                            nome_com_sabor = f"{item['nome']} ({sabor_selecionado})" if sabor_selecionado else item['nome']
+                                            nome_final = f"{nome_com_sabor} [Obs: {obs_input}]" if obs_input else nome_com_sabor
+                                            chave_item = f"{item['id']}_{sabor_selecionado}_{obs_input}"
+                                            
+                                            if chave_item in st.session_state['carrinho']: 
+                                                st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
+                                            else: 
+                                                st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
+                                            
+                                            st.toast(f"{qtd_desejada}x adicionado!", icon="✅")
                                     else:
-                                        st.button("Fechado", key=f"btn_add_beb_{item['id']}", disabled=True, use_container_width=True)
+                                        st.button("Fechado", key=f"btn_closed_{item['id']}", disabled=True, use_container_width=True)
                                 else:
-                                    st.button("Esgotado", key=f"btn_add_{item['id']}", disabled=True, use_container_width=True)
+                                    st.button("Esgotado", key=f"btn_esg_{item['id']}", disabled=True, use_container_width=True)
+
+            with aba_alimentos:
+                renderizar_itens("Alimentos")
+
+            with aba_bebidas:
+                renderizar_itens("Bebidas")
 
             if len(st.session_state['carrinho']) > 0:
                 st.subheader("🛒 Resumo do Pedido")
@@ -631,27 +635,13 @@ elif menu == "Portal do Motoboy":
 # ==========================================
 elif menu == "Gestão do Cardápio":
     st.title("📝 Gestão do Cardápio")
-    
-    with st.expander("🥤 Configurar Sabores de Bebidas", expanded=False):
-        with st.form("form_sabores"):
-            sabores_suco_atual = get_config('sabores_suco', 'Laranja,Limão,Maracujá,Goiaba,Cupuaçu')
-            opcoes_refri_atual = get_config('opcoes_refri', 'Coca-Cola,Guaraná Antarctica,Fanta Laranja,Sprite,Coca-Cola Zero')
-            
-            st.write("Digite as opções separadas por vírgula:")
-            novo_sabores_suco = st.text_input("Sabores de Suco", value=sabores_suco_atual)
-            novo_opcoes_refri = st.text_input("Opções de Refrigerante", value=opcoes_refri_atual)
-            
-            if st.form_submit_button("Salvar Sabores"):
-                set_config('sabores_suco', novo_sabores_suco)
-                set_config('opcoes_refri', novo_opcoes_refri)
-                st.success("Sabores atualizados com sucesso!")
-                st.rerun()
 
     with st.expander("➕ Cadastrar Novo Item", expanded=False):
         with st.form("form_novo_prato", clear_on_submit=True):
             novo_nome = st.text_input("Nome do Prato/Bebida*")
             novo_preco = st.number_input("Preço (R$)*", min_value=0.0, format="%.2f", step=1.0)
             nova_categoria = st.selectbox("Categoria", ["Alimentos", "Bebidas"])
+            nova_opcoes = st.text_input("Sabores ou Variações (Separados por vírgula. Ex: Coca, Guaraná, Sprite)", placeholder="Deixe em branco se não houver")
             nova_imagem = st.text_input("Link da Imagem (Opcional)")
             
             col_estoque, col_qtd = st.columns(2)
@@ -664,7 +654,7 @@ elif menu == "Gestão do Cardápio":
 
             if st.form_submit_button("Salvar no Cardápio"):
                 if novo_nome and novo_preco > 0:
-                    adicionar_prato(novo_nome, novo_preco, nova_imagem, nova_categoria, estoque_final)
+                    adicionar_prato(novo_nome, novo_preco, nova_imagem, nova_categoria, estoque_final, nova_opcoes)
                     st.success(f"'{novo_nome}' adicionado!")
                     st.rerun()
                 else: st.error("Preencha nome e preço.")
@@ -707,6 +697,7 @@ elif menu == "Gestão do Cardápio":
                             
                             idx_cat = 1 if item.get('categoria') == "Bebidas" else 0
                             edit_categoria = st.selectbox("Categoria", ["Alimentos", "Bebidas"], index=idx_cat, key=f"edit_cat_{item['id']}")
+                            edit_opcoes = st.text_input("Sabores ou Variações (Separados por vírgula)", value=item.get('opcoes', '') or "")
                             edit_imagem = st.text_input("Link da Imagem", value=item['imagem'] if item['imagem'] else "")
                             
                             has_estoque = item['estoque'] != -1
@@ -714,13 +705,13 @@ elif menu == "Gestão do Cardápio":
                             with col_estoque_ed:
                                 edit_controlar_estoque = st.checkbox("Controlar Estoque?", value=has_estoque, key=f"chk_est_{item['id']}")
                             with col_qtd_ed:
-                                edit_qtd_estoque = st.number_input("Quantidade em Estoque", min_value=0, value=item['estoque'] if has_estoque else 10, step=1, disabled=not edit_controlar_estoque, key=f"qtd_est_{item['id']}")
+                                edit_qtd_estoque = st.number_input("Quantidade", min_value=0, value=item['estoque'] if has_estoque else 10, step=1, disabled=not edit_controlar_estoque, key=f"qtd_est_{item['id']}")
                             
                             estoque_final_edit = edit_qtd_estoque if edit_controlar_estoque else -1
 
                             if st.form_submit_button("Salvar Alterações"):
                                 if edit_nome and edit_preco > 0:
-                                    editar_prato(item['id'], edit_nome, edit_preco, edit_imagem, edit_categoria, estoque_final_edit)
+                                    editar_prato(item['id'], edit_nome, edit_preco, edit_imagem, edit_categoria, estoque_final_edit, edit_opcoes)
                                     st.success("Atualizado!")
                                     st.rerun()
             st.write("---")
@@ -941,7 +932,6 @@ elif menu == "Relatório Financeiro":
             st.divider()
             st.subheader("📥 Exportação de Dados")
             
-            # Geração de Excel (.xlsx) na Memória
             output_excel = io.BytesIO()
             with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
                 df_exibicao.to_excel(writer, index=False, sheet_name='Histórico de Vendas')
@@ -959,7 +949,6 @@ elif menu == "Relatório Financeiro":
 
             with col_btn3:
                 with st.popover("🖨️ Salvar em PDF / Imprimir", use_container_width=True):
-                    
                     tabela_vendas_html = df_exibicao.to_html(index=False, classes='table table-striped')
                     tabela_moto_html = acerto_motoboys.to_html(index=False, classes='table table-striped') if not acerto_motoboys.empty else "<p>Sem corridas no período.</p>"
                     
