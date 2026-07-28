@@ -112,7 +112,6 @@ def inicializar_banco():
         )
     ''')
     
-    # Adiciona coluna de senha caso a tabela já existisse
     c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='motoboys' AND column_name='senha'")
     if not c.fetchone():
         c.execute("ALTER TABLE motoboys ADD COLUMN senha TEXT")
@@ -131,7 +130,6 @@ def inicializar_banco():
     conn.commit()
     conn.close()
 
-# Demais Funções
 def get_config(chave):
     conn = get_conexao()
     c = conn.cursor()
@@ -550,7 +548,7 @@ elif menu == "Portal do Motoboy":
             st.warning("Nenhum entregador cadastrado ou ativo no momento.")
         else:
             lista_nomes = [m['nome'] for m in motoboys_ativos]
-            dict_senhas = {m['nome']: m.get('senha', '1234') for m in motoboys_ativos} # Padrão é 1234 se for nulo
+            dict_senhas = {m['nome']: m.get('senha', '1234') for m in motoboys_ativos} 
             
             with st.container():
                 st.info("Selecione seu nome e digite a sua senha para ver suas entregas.")
@@ -560,7 +558,7 @@ elif menu == "Portal do Motoboy":
                 if st.button("Acessar minhas entregas", type="primary", use_container_width=True):
                     if nome_selecionado != "Selecione...":
                         senha_correta = dict_senhas.get(nome_selecionado)
-                        if not senha_correta: # Tratamento de segurança extra
+                        if not senha_correta: 
                             senha_correta = "1234"
                             
                         if senha_digitada == senha_correta:
@@ -571,7 +569,7 @@ elif menu == "Portal do Motoboy":
                             st.error("Senha incorreta! (A senha padrão é 1234 se não foi alterada).")
                     else:
                         st.warning("Por favor, selecione seu nome na lista.")
-        st.stop() # Pausa a execução do app aqui se não logar
+        st.stop() 
         
     # 4.2 TELA DE ENTREGAS DO MOTOBOY LOGADO
     st_autorefresh(interval=15000, limit=None, key="atualizacao_portal_motoboy")
@@ -602,10 +600,13 @@ elif menu == "Portal do Motoboy":
                 st.markdown(f"**📍 Endereço:** {row['endereco']}")
                 st.markdown(f"**💰 Receber:** R$ {float(row['total']):.2f} - Forma: **{row['pagamento']}**")
                 
-                if st.button("✅ Confirmar Entrega Realizada", key=f"btn_entregue_{row['id']}", use_container_width=True, type="primary"):
-                    atualizar_status_pedido(row['id'], "Concluído", nome_motoboy_logado)
-                    st.success("Entrega finalizada com sucesso! A cozinha foi avisada.")
-                    st.rerun()
+                # POPOVER DE CONFIRMAÇÃO PARA O MOTOBOY
+                with st.popover("✅ Confirmar Entrega Realizada", use_container_width=True):
+                    st.markdown("Tem certeza que finalizou esta entrega?")
+                    if st.button("Sim, confirmar entrega", key=f"conf_motoboy_{row['id']}", type="primary", use_container_width=True):
+                        atualizar_status_pedido(row['id'], "Concluído", nome_motoboy_logado)
+                        st.success("Entrega finalizada com sucesso! A cozinha foi avisada.")
+                        st.rerun()
 
 # ==========================================
 # 5. GESTÃO DO CARDÁPIO
@@ -700,7 +701,6 @@ elif menu == "Gestão de Motoboys":
                     excluir_motoboy(moto['id'])
                     st.rerun()
                     
-                # Opção de editar a senha do motoboy
                 with st.expander("✏️ Editar/Trocar Senha", expanded=False):
                     with st.form(f"form_edit_moto_{moto['id']}"):
                         edit_nome_moto = st.text_input("Nome", value=moto['nome'])
@@ -794,11 +794,28 @@ elif menu == "Painel da Cozinha":
 
                 motoboy_selecionado = st.selectbox("Vincular Motoboy:", lista_nomes_motoboys, key=f"sel_moto_{row['id']}")
 
+                # BOTÕES DE AÇÃO COM CONFIRMAÇÃO (POPOVER)
                 col1, col2, col3, col4 = st.columns(4)
-                if col1.button("Produção", key=f"prod_{row['id']}"): atualizar_status_pedido(row['id'], "Em Produção", motoboy_selecionado); st.rerun()
-                if col2.button("Entrega", key=f"ent_{row['id']}"): atualizar_status_pedido(row['id'], "Saiu para Entrega", motoboy_selecionado); st.rerun()
-                if col3.button("✅ Concluir", key=f"conc_{row['id']}"): atualizar_status_pedido(row['id'], "Concluído", motoboy_selecionado); st.rerun()
-                if col4.button("❌ Cancelar", key=f"canc_{row['id']}"): atualizar_status_pedido(row['id'], "Cancelado"); st.rerun()
+                
+                if col1.button("Produção", key=f"prod_{row['id']}", use_container_width=True): 
+                    atualizar_status_pedido(row['id'], "Em Produção", motoboy_selecionado)
+                    st.rerun()
+                    
+                if col2.button("Entrega", key=f"ent_{row['id']}", use_container_width=True): 
+                    atualizar_status_pedido(row['id'], "Saiu para Entrega", motoboy_selecionado)
+                    st.rerun()
+                    
+                with col3.popover("✅ Concluir", use_container_width=True):
+                    st.markdown("**Confirmar conclusão?**")
+                    if st.button("Sim, concluir", key=f"conf_conc_{row['id']}", type="primary", use_container_width=True):
+                        atualizar_status_pedido(row['id'], "Concluído", motoboy_selecionado)
+                        st.rerun()
+                        
+                with col4.popover("❌ Cancelar", use_container_width=True):
+                    st.markdown("**Confirmar cancelamento?**")
+                    if st.button("Sim, cancelar", key=f"conf_canc_{row['id']}", type="primary", use_container_width=True):
+                        atualizar_status_pedido(row['id'], "Cancelado")
+                        st.rerun()
 
 elif menu == "Relatório Financeiro":
     st.title("📊 Relatório Financeiro")
