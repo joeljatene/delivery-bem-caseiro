@@ -1,16 +1,3 @@
-Entendo perfeitamente! Esse é um problema clássico de desenvolvimento web e mobile. Quando o celular do cliente está no Modo Noturno (Dark Mode), o navegador tenta "forçar" um fundo escuro nos elementos do sistema, mas se o aplicativo não tiver regras claras para isso, o texto continua escuro ou o campo de digitação fica cinza-escuro com letra preta, tornando tudo ilegível.
-
-Para resolver isso de forma definitiva e garantir legibilidade **em qualquer celular (seja Modo Claro ou Modo Noturno)**, nós ajustamos o CSS global do aplicativo.
-
-### O que foi ajustado nesta versão:
-
-1. **Forçamento de Contraste Alto em Caixas de Texto (`input`, `select`, `textarea`):** Definimos explicitamente que as caixas de digitação do formulário, observações e seleções sempre terão fundo claro e texto escuro muito bem destacado, independentemente do tema do celular do cliente.
-2. **Estilização dos Rótulos (Labels) e Textos:** Forçamos que todos os títulos e rótulos dos campos (como "Nome Completo", "Seu WhatsApp", "Observações") tenham uma cor escura fixa e legível.
-3. **Cards do Cardápio Imunizados contra o Modo Noturno:** Garantimos que os cartões do cardápio mantenham o fundo branco puro com texto em verde petróleo/preto, evitando que o navegador do celular inverta as cores dos cards de comida.
-
-Pode copiar todo o código abaixo e substituir no seu arquivo `app.py`:
-
-```python
 import datetime
 import urllib.parse
 import psycopg2 
@@ -1061,5 +1048,3 @@ elif menu == "Relatório Financeiro":
                     tabela_moto_html = acerto_motoboys.to_html(index=False, classes='table table-striped') if not acerto_motoboys.empty else "<p>Sem corridas no período.</p>"
                     relatorio_html = f"<html><head><style>body {{ font-family: Arial, sans-serif; padding: 20px; }} h1, h2 {{ color: #005753; text-align: center; }} .resumo {{ display: flex; justify-content: space-around; background-color: #F7F9FC; padding: 15px; border-radius: 10px; margin-bottom: 20px; }} .resumo-box {{ text-align: center; font-weight: bold; font-size: 16px; }} table {{ width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 12px; }} th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }} th {{ background-color: #005753; color: white; }} .btn-imprimir {{ display: block; width: 100%; padding: 15px; background: #F14C14; color: #fff; border: none; cursor: pointer; font-weight: bold; font-size: 16px; border-radius: 8px; }} @media print {{ .btn-imprimir {{ display: none; }} }}</style></head><body><h1>Relatório Gerencial - Bem Caseiro</h1><p style='text-align: center;'>Período: {data_inicio} até {data_fim}</p><div class='resumo'><div class='resumo-box'>Faturamento Bruto<br><span style='color: #F14C14;'>R$ {faturamento_total:,.2f}</span></div><div class='resumo-box'>Produtos<br><span style='color: #F14C14;'>R$ {faturamento_produtos:,.2f}</span></div><div class='resumo-box'>Taxas/Fretes<br><span style='color: #F14C14;'>R$ {total_fretes:,.2f}</span></div></div><h2>Acerto de Motoboys</h2>{tabela_moto_html}<h2>Histórico de Pedidos</h2>{tabela_vendas_html}<br><br><button class='btn-imprimir' onclick='window.print()'>🖨️ CLIQUE AQUI PARA IMPRIMIR OU SALVAR COMO PDF</button></body></html>"
                     components.html(relatorio_html, height=600, scrolling=True)
-
-```
