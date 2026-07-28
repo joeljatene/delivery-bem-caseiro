@@ -197,7 +197,6 @@ def salvar_novo_pedido(cliente, telefone, endereco, itens, total, pagamento, tax
     ''', (data_hora, cliente, telefone, endereco, itens_json, total, pagamento, 'Novo', taxa_entrega))
     pedido_id = c.fetchone()[0]
     
-    # Subtrai o estoque corretamente
     for item in itens:
         item_id = item.get('id')
         qtd = int(item.get('qtd', 1))
@@ -221,7 +220,6 @@ def atualizar_status_pedido(pedido_id, novo_status, motoboy=None):
     conn = get_conexao()
     c = conn.cursor()
     
-    # Lógica de estorno de estoque caso o pedido seja cancelado
     if novo_status == "Cancelado":
         c.execute("SELECT status, itens FROM pedidos WHERE id = %s", (pedido_id,))
         resultado = c.fetchone()
@@ -424,6 +422,17 @@ if menu == "Fazer Pedido (Cliente)":
         st.error("🛑 **ESTAMOS FECHADOS NO MOMENTO.**\n\nNosso horário de funcionamento é de **Segunda a Sábado, das 10:45 às 14:30**.")
         st.info("Você pode conferir as opções do cardápio abaixo, mas os botões de pedido estão temporariamente desativados.")
 
+    # NOTIFICAÇÃO INTUITIVA DO CARRINHO (BANNER SUPERIOR)
+    if len(st.session_state['carrinho']) > 0:
+        qtd_total_cart = sum(item['qtd'] for item in st.session_state['carrinho'].values())
+        valor_total_cart = sum(item['qtd'] * item['preco'] for item in st.session_state['carrinho'].values())
+        st.markdown(f"""
+        <div style='background-color: #E8F5E9; border: 2px solid #4CAF50; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 20px; box-shadow: 0px 4px 10px rgba(76, 175, 80, 0.2);'>
+            <span style='color: #2E7D32; font-size: 18px; font-weight: bold;'>🛒 {qtd_total_cart} item(ns) no carrinho (R$ {valor_total_cart:.2f})</span><br>
+            <span style='color: #2E7D32; font-size: 14px;'>Role a página até o final para confirmar seu pedido 👇</span>
+        </div>
+        """, unsafe_allow_html=True)
+
     try:
         cardapio_banco = carregar_cardapio_completo()
         itens_disponiveis = [item for item in cardapio_banco if item['disponivel'] == 1]
@@ -438,7 +447,6 @@ if menu == "Fazer Pedido (Cliente)":
                     eh_esta_categoria = (item.get("categoria", "Alimentos") == "Bebidas") if categoria_filtro == "Bebidas" else (item.get("categoria", "Alimentos") != "Bebidas")
                     
                     if eh_esta_categoria:
-                        # Limpeza segura do estoque para lidar com NaNs
                         estoque_val = item.get('estoque')
                         if pd.isna(estoque_val) or estoque_val is None:
                             estoque_real = -1
@@ -447,7 +455,6 @@ if menu == "Fazer Pedido (Cliente)":
                             
                         esgotado = (estoque_real == 0)
                         
-                        # Limpeza segura de opções
                         opcoes_raw = item.get('opcoes', '')
                         if pd.isna(opcoes_raw) or opcoes_raw is None:
                             opcoes_raw = ''
@@ -472,11 +479,15 @@ if menu == "Fazer Pedido (Cliente)":
                                     
                             with col_add:
                                 if not esgotado:
-                                    # Verifica quanto desse item já tem no carrinho
+                                    # Conta quanto deste item exato o cliente já colocou no carrinho
                                     qtd_no_carrinho = 0
                                     for k, v in st.session_state['carrinho'].items():
                                         if v['id'] == item['id']:
                                             qtd_no_carrinho += v['qtd']
+                                            
+                                    # INDICADOR VISUAL INDIVIDUAL DE CARRINHO
+                                    if qtd_no_carrinho > 0:
+                                        st.markdown(f"<div style='color: #00C853; font-weight: bold; font-size: 13px; margin-bottom: 5px; text-align: center;'>✅ {qtd_no_carrinho} no carrinho</div>", unsafe_allow_html=True)
                                             
                                     estoque_disponivel = (estoque_real - qtd_no_carrinho) if estoque_real != -1 else 20
                                     
@@ -486,7 +497,10 @@ if menu == "Fazer Pedido (Cliente)":
                                         qtd_desejada = st.number_input("Qtd", min_value=1, max_value=estoque_disponivel, value=1, key=f"qtd_item_{item['id']}")
                                         
                                         if loja_aberta:
-                                            if st.button("Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
+                                            # MUDA O TEXTO DO BOTÃO SE JÁ TIVER NO CARRINHO
+                                            texto_botao = "+ Adicionar Mais" if qtd_no_carrinho > 0 else "Adicionar"
+                                            
+                                            if st.button(texto_botao, key=f"btn_add_{item['id']}", use_container_width=True):
                                                 nome_com_sabor = f"{item['nome']} ({sabor_selecionado})" if sabor_selecionado else item['nome']
                                                 nome_final = f"{nome_com_sabor} [Obs: {obs_input}]" if obs_input else nome_com_sabor
                                                 chave_item = f"{item['id']}_{sabor_selecionado}_{obs_input}"
@@ -496,18 +510,16 @@ if menu == "Fazer Pedido (Cliente)":
                                                 else: 
                                                     st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
                                                 
-                                                st.toast(f"{qtd_desejada}x adicionado!", icon="✅")
-                                                st.rerun() # Atualiza a tela para reajustar o limite do estoque visual
+                                                st.toast(f"{qtd_desejada}x {item['nome']} adicionado ao carrinho!", icon="🛒")
+                                                st.rerun() 
                                         else:
                                             st.button("Fechado", key=f"btn_closed_{item['id']}", disabled=True, use_container_width=True)
 
-            with aba_alimentos:
-                renderizar_itens("Alimentos")
-
-            with aba_bebidas:
-                renderizar_itens("Bebidas")
+            with aba_alimentos: renderizar_itens("Alimentos")
+            with aba_bebidas: renderizar_itens("Bebidas")
 
             if len(st.session_state['carrinho']) > 0:
+                st.write("---")
                 st.subheader("🛒 Resumo do Pedido")
                 total_itens = 0.0
                 carrinho_formatado_para_banco = []
@@ -526,8 +538,6 @@ if menu == "Fazer Pedido (Cliente)":
                             st.markdown(f"**{item_cart['nome']}**")
                             st.markdown(f"R$ {item_cart['preco']:.2f} un — **Total: R$ {subtotal:.2f}**")
                         with col_edit:
-                            
-                            # Recupera o estoque real do item para travar a edição no carrinho
                             estoque_real = -1
                             for prato in cardapio_banco:
                                 if prato['id'] == item_cart['id']:
@@ -537,8 +547,6 @@ if menu == "Fazer Pedido (Cliente)":
                                     break
                                     
                             max_value_cart = estoque_real if estoque_real != -1 else 30
-                            
-                            # Trava de segurança para carrinho já com excedente
                             valor_atual = int(item_cart['qtd'])
                             if valor_atual > max_value_cart:
                                 st.session_state['carrinho'][chave]['qtd'] = max_value_cart
@@ -548,7 +556,6 @@ if menu == "Fazer Pedido (Cliente)":
                             if nova_qtd != item_cart['qtd']:
                                 st.session_state['carrinho'][chave]['qtd'] = nova_qtd
                                 st.rerun()
-                                
                         with col_del:
                             st.write("") 
                             if st.button("🗑️", key=f"del_cart_{chave}"):
@@ -673,6 +680,12 @@ elif menu == "Portal do Motoboy":
                 st.markdown(f"### Pedido #{row['id']}")
                 st.markdown(f"**👤 Cliente:** {row['cliente']}")
                 st.markdown(f"**📍 Endereço:** {row['endereco']}")
+                
+                if row['endereco'] != "Retirada no Local":
+                    endereco_maps = f"{row['endereco']}, Boa Vista - RR, Brasil"
+                    link_maps = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(endereco_maps)}"
+                    st.markdown(f'<a href="{link_maps}" target="_blank" style="display: inline-block; margin-top: 5px; margin-bottom: 15px; padding: 8px 12px; background-color: #4285F4; color: white; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: bold;">🗺️ Navegar no Google Maps</a>', unsafe_allow_html=True)
+                
                 st.markdown(f"**💰 Receber:** R$ {float(row['total']):.2f} - Forma: **{row['pagamento']}**")
                 
                 with st.popover("✅ Confirmar Entrega Realizada", use_container_width=True):
@@ -697,10 +710,8 @@ elif menu == "Gestão do Cardápio":
             nova_imagem = st.text_input("Link da Imagem (Opcional)")
             
             col_estoque, col_qtd = st.columns(2)
-            with col_estoque:
-                controlar_estoque = st.checkbox("Controlar Estoque?")
-            with col_qtd:
-                qtd_estoque = st.number_input("Quantidade em Estoque", min_value=1, value=10, step=1, disabled=not controlar_estoque)
+            with col_estoque: controlar_estoque = st.checkbox("Controlar Estoque?")
+            with col_qtd: qtd_estoque = st.number_input("Quantidade em Estoque", min_value=1, value=10, step=1, disabled=not controlar_estoque)
             
             estoque_final = qtd_estoque if controlar_estoque else -1
 
@@ -715,22 +726,15 @@ elif menu == "Gestão do Cardápio":
     st.subheader("Itens Cadastrados")
     cardapio_banco = carregar_cardapio_completo()
     
-    if not cardapio_banco: 
-        st.info("Nenhum item cadastrado.")
+    if not cardapio_banco: st.info("Nenhum item cadastrado.")
     else:
         df_cardapio = pd.DataFrame(cardapio_banco)
-        categorias_existentes = df_cardapio['categoria'].unique()
-        
-        for cat in categorias_existentes:
+        for cat in df_cardapio['categoria'].unique():
             st.markdown(f"#### 📂 Categoria: {cat}")
-            itens_da_categoria = df_cardapio[df_cardapio['categoria'] == cat].to_dict('records')
-            
-            for item in itens_da_categoria:
+            for item in df_cardapio[df_cardapio['categoria'] == cat].to_dict('records'):
                 with st.container():
                     c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
-                    
-                    estoque_val = item.get('estoque')
-                    estoque_real = -1 if pd.isna(estoque_val) or estoque_val is None else int(float(estoque_val))
+                    estoque_real = -1 if pd.isna(item.get('estoque')) else int(float(item.get('estoque')))
                     estoque_display = "♾️ Infinito" if estoque_real == -1 else f"📦 {estoque_real} unid."
                     
                     c1.write(f"**{item['nome']}** | {estoque_display}")
@@ -750,21 +754,14 @@ elif menu == "Gestão do Cardápio":
                         with st.form(f"form_edit_{item['id']}"):
                             edit_nome = st.text_input("Nome", value=item['nome'])
                             edit_preco = st.number_input("Preço (R$)", min_value=0.0, value=float(item['preco']), format="%.2f", step=1.0)
-                            
-                            idx_cat = 1 if item.get('categoria') == "Bebidas" else 0
-                            edit_categoria = st.selectbox("Categoria", ["Alimentos", "Bebidas"], index=idx_cat, key=f"edit_cat_{item['id']}")
-                            
-                            op_raw = item.get('opcoes', '')
-                            edit_opcoes = st.text_input("Sabores ou Variações (Separados por vírgula)", value=op_raw if not pd.isna(op_raw) else "")
+                            edit_categoria = st.selectbox("Categoria", ["Alimentos", "Bebidas"], index=1 if item.get('categoria') == "Bebidas" else 0, key=f"edit_cat_{item['id']}")
+                            edit_opcoes = st.text_input("Sabores ou Variações", value=item.get('opcoes', '') if not pd.isna(item.get('opcoes')) else "")
                             edit_imagem = st.text_input("Link da Imagem", value=item['imagem'] if item['imagem'] else "")
                             
                             has_estoque = estoque_real != -1
                             col_estoque_ed, col_qtd_ed = st.columns(2)
-                            with col_estoque_ed:
-                                edit_controlar_estoque = st.checkbox("Controlar Estoque?", value=has_estoque, key=f"chk_est_{item['id']}")
-                            with col_qtd_ed:
-                                val_in_input = estoque_real if has_estoque else 10
-                                edit_qtd_estoque = st.number_input("Quantidade", min_value=0, value=val_in_input, step=1, disabled=not edit_controlar_estoque, key=f"qtd_est_{item['id']}")
+                            with col_estoque_ed: edit_controlar_estoque = st.checkbox("Controlar Estoque?", value=has_estoque, key=f"chk_est_{item['id']}")
+                            with col_qtd_ed: edit_qtd_estoque = st.number_input("Quantidade", min_value=0, value=estoque_real if has_estoque else 10, step=1, disabled=not edit_controlar_estoque, key=f"qtd_est_{item['id']}")
                             
                             estoque_final_edit = int(edit_qtd_estoque) if edit_controlar_estoque else -1
 
@@ -999,52 +996,11 @@ elif menu == "Relatório Financeiro":
             excel_data = output_excel.getvalue()
 
             col_btn1, col_btn2, col_btn3 = st.columns(3)
-            
-            with col_btn1:
-                st.download_button(label="📊 Baixar Histórico em Excel", data=excel_data, file_name=f"relatorio_vendas_{data_inicio}_a_{data_fim}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-            
-            with col_btn2:
-                st.download_button(label="📄 Baixar em CSV Simples", data=df_exibicao.to_csv(index=False).encode('utf-8'), file_name=f"relatorio_vendas_{data_inicio}_a_{data_fim}.csv", mime="text/csv", use_container_width=True)
-
+            with col_btn1: st.download_button(label="📊 Baixar Histórico em Excel", data=excel_data, file_name=f"relatorio_vendas_{data_inicio}_a_{data_fim}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            with col_btn2: st.download_button(label="📄 Baixar em CSV Simples", data=df_exibicao.to_csv(index=False).encode('utf-8'), file_name=f"relatorio_vendas_{data_inicio}_a_{data_fim}.csv", mime="text/csv", use_container_width=True)
             with col_btn3:
                 with st.popover("🖨️ Salvar em PDF / Imprimir", use_container_width=True):
                     tabela_vendas_html = df_exibicao.to_html(index=False, classes='table table-striped')
                     tabela_moto_html = acerto_motoboys.to_html(index=False, classes='table table-striped') if not acerto_motoboys.empty else "<p>Sem corridas no período.</p>"
-                    
-                    relatorio_html = f"""
-                    <html>
-                    <head>
-                        <style>
-                            body {{ font-family: Arial, sans-serif; padding: 20px; }}
-                            h1, h2 {{ color: #005753; text-align: center; }}
-                            .resumo {{ display: flex; justify-content: space-around; background-color: #F7F9FC; padding: 15px; border-radius: 10px; margin-bottom: 20px; }}
-                            .resumo-box {{ text-align: center; font-weight: bold; font-size: 16px; }}
-                            table {{ width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 12px; }}
-                            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-                            th {{ background-color: #005753; color: white; }}
-                            .btn-imprimir {{ display: block; width: 100%; padding: 15px; background: #F14C14; color: #fff; border: none; cursor: pointer; font-weight: bold; font-size: 16px; border-radius: 8px; }}
-                            @media print {{ .btn-imprimir {{ display: none; }} }}
-                        </style>
-                    </head>
-                    <body>
-                        <h1>Relatório Gerencial - Bem Caseiro</h1>
-                        <p style='text-align: center;'>Período: {data_inicio} até {data_fim}</p>
-                        
-                        <div class="resumo">
-                            <div class="resumo-box">Faturamento Bruto<br><span style='color: #F14C14;'>R$ {faturamento_total:,.2f}</span></div>
-                            <div class="resumo-box">Produtos<br><span style='color: #F14C14;'>R$ {faturamento_produtos:,.2f}</span></div>
-                            <div class="resumo-box">Taxas/Fretes<br><span style='color: #F14C14;'>R$ {total_fretes:,.2f}</span></div>
-                        </div>
-
-                        <h2>Acerto de Motoboys</h2>
-                        {tabela_moto_html}
-
-                        <h2>Histórico de Pedidos</h2>
-                        {tabela_vendas_html}
-                        
-                        <br><br>
-                        <button class="btn-imprimir" onclick="window.print()">🖨️ CLIQUE AQUI PARA IMPRIMIR OU SALVAR COMO PDF</button>
-                    </body>
-                    </html>
-                    """
+                    relatorio_html = f"<html><head><style>body {{ font-family: Arial, sans-serif; padding: 20px; }} h1, h2 {{ color: #005753; text-align: center; }} .resumo {{ display: flex; justify-content: space-around; background-color: #F7F9FC; padding: 15px; border-radius: 10px; margin-bottom: 20px; }} .resumo-box {{ text-align: center; font-weight: bold; font-size: 16px; }} table {{ width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 12px; }} th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }} th {{ background-color: #005753; color: white; }} .btn-imprimir {{ display: block; width: 100%; padding: 15px; background: #F14C14; color: #fff; border: none; cursor: pointer; font-weight: bold; font-size: 16px; border-radius: 8px; }} @media print {{ .btn-imprimir {{ display: none; }} }}</style></head><body><h1>Relatório Gerencial - Bem Caseiro</h1><p style='text-align: center;'>Período: {data_inicio} até {data_fim}</p><div class='resumo'><div class='resumo-box'>Faturamento Bruto<br><span style='color: #F14C14;'>R$ {faturamento_total:,.2f}</span></div><div class='resumo-box'>Produtos<br><span style='color: #F14C14;'>R$ {faturamento_produtos:,.2f}</span></div><div class='resumo-box'>Taxas/Fretes<br><span style='color: #F14C14;'>R$ {total_fretes:,.2f}</span></div></div><h2>Acerto de Motoboys</h2>{tabela_moto_html}<h2>Histórico de Pedidos</h2>{tabela_vendas_html}<br><br><button class='btn-imprimir' onclick='window.print()'>🖨️ CLIQUE AQUI PARA IMPRIMIR OU SALVAR COMO PDF</button></body></html>"
                     components.html(relatorio_html, height=600, scrolling=True)
