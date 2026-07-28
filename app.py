@@ -125,13 +125,10 @@ def inicializar_banco():
     conn.commit()
     conn.close()
 
-# FUNÇÕES DE BAIRROS
 def carregar_bairros(ativos_apenas=False):
     conn = get_conexao()
-    if ativos_apenas:
-        df = pd.read_sql_query("SELECT * FROM bairros_entrega WHERE ativo = 1 ORDER BY nome", conn)
-    else:
-        df = pd.read_sql_query("SELECT * FROM bairros_entrega ORDER BY ativo DESC, nome", conn)
+    if ativos_apenas: df = pd.read_sql_query("SELECT * FROM bairros_entrega WHERE ativo = 1 ORDER BY nome", conn)
+    else: df = pd.read_sql_query("SELECT * FROM bairros_entrega ORDER BY ativo DESC, nome", conn)
     conn.close()
     return df.to_dict('records')
 
@@ -462,7 +459,17 @@ if menu == "Fazer Pedido (Cliente)":
                                 sabor_selecionado = ""
                                 if not esgotado:
                                     if opcoes_lista: sabor_selecionado = st.selectbox("Opções/Sabores:", opcoes_lista, key=f"sabor_{item['id']}")
-                                    obs_input = st.text_input("Observações:", placeholder="Ex: sem cebola", key=f"obs_{item['id']}")
+                                    
+                                    # LÓGICA DE DICAS DINÂMICAS PARA OBSERVAÇÕES
+                                    if categoria_filtro == "Bebidas":
+                                        if "suco" in item['nome'].lower():
+                                            dica_obs = "Ex: sem açúcar, sem gelo"
+                                        else:
+                                            dica_obs = "Ex: bem gelado, com copo"
+                                    else:
+                                        dica_obs = "Ex: sem cebola, carne bem passada"
+                                        
+                                    obs_input = st.text_input("Observações:", placeholder=dica_obs, key=f"obs_{item['id']}")
                                 else:
                                     st.markdown("<div class='esgotado-badge'>ESGOTADO HOJE</div>", unsafe_allow_html=True)
                                     
@@ -543,7 +550,6 @@ if menu == "Fazer Pedido (Cliente)":
                 
                 cli_nome, cli_bairro, cli_rua, telefone_limpo = "", "", "", ""
                 
-                # CARREGAMENTO DINÂMICO DE BAIRROS (BD)
                 bairros_ativos = carregar_bairros(ativos_apenas=True)
                 retirada = next((b for b in bairros_ativos if "Retirar no Local" in b['nome']), None)
                 outros_bairros = sorted([b for b in bairros_ativos if "Retirar no Local" not in b['nome']], key=lambda x: x['nome'])
@@ -604,6 +610,17 @@ if menu == "Fazer Pedido (Cliente)":
                             st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
                             st.markdown(f'<a href="{link_whatsapp}" target="_blank" style="display: block; padding: 15px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 18px; font-weight: bold; border-radius: 12px; margin-top: 15px;">📱 Enviar Pedido para o Restaurante</a>', unsafe_allow_html=True)
                         else: st.error("Por favor, preencha os dados de entrega obrigatórios.")
+
+            # BOTÃO DE DÚVIDAS E PROBLEMAS (SUPORTE AO CLIENTE)
+            st.markdown("---")
+            msg_suporte = "Olá, Bem Caseiro! Preciso de uma ajuda/tirar uma dúvida."
+            link_suporte = f"https://wa.me/{NUMERO_WHATSAPP}?text={urllib.parse.quote(msg_suporte)}"
+            st.markdown(f"""
+            <div style='text-align: center; margin-top: 20px; margin-bottom: 20px;'>
+                <p style='color: #888888; font-size: 14px;'>Teve algum problema com o app ou tem alguma dúvida?</p>
+                <a href="{link_suporte}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #E0E6ED; color: #005753; text-decoration: none; font-size: 15px; font-weight: bold; border-radius: 8px;">💬 Falar direto com o Atendimento</a>
+            </div>
+            """, unsafe_allow_html=True)
 
     except Exception as e:
         st.error(f"Erro de comunicação com o sistema: {e}")
