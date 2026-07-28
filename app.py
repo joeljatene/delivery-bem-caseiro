@@ -123,9 +123,12 @@ def inicializar_banco():
             valor TEXT
         )
     ''')
-    c.execute("SELECT valor FROM configuracoes WHERE chave = 'alarme_sonoro'")
-    if not c.fetchone():
-        c.execute("INSERT INTO configuracoes (chave, valor) VALUES ('alarme_sonoro', 'ativado')")
+    
+    config_iniciais = [('alarme_sonoro', 'ativado'), ('loja_aberta', 'ativado'), ('horario_auto', 'ativado')]
+    for chave, valor in config_iniciais:
+        c.execute("SELECT valor FROM configuracoes WHERE chave = %s", (chave,))
+        if not c.fetchone():
+            c.execute("INSERT INTO configuracoes (chave, valor) VALUES (%s, %s)", (chave, valor))
 
     conn.commit()
     conn.close()
@@ -136,7 +139,7 @@ def get_config(chave):
     c.execute("SELECT valor FROM configuracoes WHERE chave = %s", (chave,))
     res = c.fetchone()
     conn.close()
-    return res[0] if res else None
+    return res[0] if res else 'ativado'
 
 def set_config(chave, valor):
     conn = get_conexao()
@@ -377,6 +380,28 @@ else:
     )
 
 # ==========================================
+# VERIFICAÇÃO DE HORÁRIO DE FUNCIONAMENTO
+# ==========================================
+fuso_rr = datetime.timezone(datetime.timedelta(hours=-4)) # Fuso de Boa Vista
+agora = datetime.datetime.now(fuso_rr)
+dia_semana = agora.weekday() # 0 = Seg, ..., 5 = Sab, 6 = Dom
+hora_atual = agora.time()
+
+loja_aberta_manual = get_config('loja_aberta')
+horario_auto = get_config('horario_auto')
+
+loja_aberta = True
+if loja_aberta_manual == 'desativado':
+    loja_aberta = False
+elif horario_auto == 'ativado':
+    hora_abertura = datetime.time(10, 45)
+    hora_fechamento = datetime.time(14, 30)
+    if dia_semana == 6: # Domingo
+        loja_aberta = False
+    elif not (hora_abertura <= hora_atual <= hora_fechamento):
+        loja_aberta = False
+
+# ==========================================
 # 3. MÓDULO DO CLIENTE (CARDÁPIO)
 # ==========================================
 if menu == "Fazer Pedido (Cliente)":
@@ -388,6 +413,11 @@ if menu == "Fazer Pedido (Cliente)":
         else: st.markdown("<h1 style='text-align: center; color: #005753;'>Bem Caseiro Delivery</h1>", unsafe_allow_html=True)
 
     st.markdown("<h3 style='text-align: center;'>Faça o seu Pedido</h3>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: center; color: #F14C14; font-size: 16px; font-weight: bold; margin-bottom: 20px; padding: 10px; background-color: white; border-radius: 10px; box-shadow: 0px 2px 5px rgba(0,0,0,0.05);'>⏱️ Tempo estimado de entrega: até 30 minutos</div>", unsafe_allow_html=True)
+
+    if not loja_aberta:
+        st.error("🛑 **ESTAMOS FECHADOS NO MOMENTO.**\n\nNosso horário de funcionamento é de **Segunda a Sábado, das 10:45 às 14:30**.")
+        st.info("Você pode conferir as opções do cardápio abaixo, mas os botões de pedido estão temporariamente desativados.")
 
     try:
         cardapio_banco = carregar_cardapio_completo()
@@ -411,12 +441,15 @@ if menu == "Fazer Pedido (Cliente)":
                                 obs_alim = st.text_input("Obs:", placeholder="Ex: sem cebola", key=f"obs_alim_{item['id']}")
                             with col_add:
                                 qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_{item['id']}")
-                                if st.button("Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
-                                    nome_final = f"{item['nome']} [Obs: {obs_alim}]" if obs_alim else item['nome']
-                                    chave_item = f"{item['id']}_{obs_alim}"
-                                    if chave_item in st.session_state['carrinho']: st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
-                                    else: st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
-                                    st.toast(f"{qtd_desejada}x {item['nome']} adicionado!", icon="✅")
+                                if loja_aberta:
+                                    if st.button("Adicionar", key=f"btn_add_{item['id']}", use_container_width=True):
+                                        nome_final = f"{item['nome']} [Obs: {obs_alim}]" if obs_alim else item['nome']
+                                        chave_item = f"{item['id']}_{obs_alim}"
+                                        if chave_item in st.session_state['carrinho']: st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
+                                        else: st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
+                                        st.toast(f"{qtd_desejada}x {item['nome']} adicionado!", icon="✅")
+                                else:
+                                    st.button("Fechado", key=f"btn_add_{item['id']}", disabled=True, use_container_width=True)
 
             with aba_bebidas:
                 for item in itens_disponiveis:
@@ -434,13 +467,16 @@ if menu == "Fazer Pedido (Cliente)":
                                 obs_beb = st.text_input("Obs:", placeholder="Ex: sem açúcar", key=f"obs_beb_{item['id']}")
                             with col_add:
                                 qtd_desejada = st.number_input("Qtd", min_value=1, max_value=20, value=1, key=f"qtd_item_beb_{item['id']}")
-                                if st.button("Adicionar", key=f"btn_add_beb_{item['id']}", use_container_width=True):
-                                    nome_com_sabor = f"{item['nome']} ({sabor})" if sabor else item['nome']
-                                    nome_final = f"{nome_com_sabor} [Obs: {obs_beb}]" if obs_beb else nome_com_sabor
-                                    chave_item = f"{item['id']}_{sabor}_{obs_beb}"
-                                    if chave_item in st.session_state['carrinho']: st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
-                                    else: st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
-                                    st.toast(f"{qtd_desejada}x {nome_com_sabor} adicionado!", icon="✅")
+                                if loja_aberta:
+                                    if st.button("Adicionar", key=f"btn_add_beb_{item['id']}", use_container_width=True):
+                                        nome_com_sabor = f"{item['nome']} ({sabor})" if sabor else item['nome']
+                                        nome_final = f"{nome_com_sabor} [Obs: {obs_beb}]" if obs_beb else nome_com_sabor
+                                        chave_item = f"{item['id']}_{sabor}_{obs_beb}"
+                                        if chave_item in st.session_state['carrinho']: st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
+                                        else: st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
+                                        st.toast(f"{qtd_desejada}x {nome_com_sabor} adicionado!", icon="✅")
+                                else:
+                                    st.button("Fechado", key=f"btn_add_beb_{item['id']}", disabled=True, use_container_width=True)
 
             if len(st.session_state['carrinho']) > 0:
                 st.subheader("🛒 Resumo do Pedido")
@@ -504,7 +540,11 @@ if menu == "Fazer Pedido (Cliente)":
                     troco = st.text_input("Troco para quanto? (Se for dinheiro)")
 
                     st.write("") 
-                    enviar = st.form_submit_button("Finalizar Pedido via WhatsApp", type="primary", use_container_width=True)
+                    
+                    if loja_aberta:
+                        enviar = st.form_submit_button("Finalizar Pedido via WhatsApp", type="primary", use_container_width=True)
+                    else:
+                        enviar = st.form_submit_button("Restaurante Fechado", disabled=True, use_container_width=True)
 
                     if enviar:
                         if telefone_limpo and nome_cliente and carrinho_formatado_para_banco and (endereco_rua or bairro_selecionado == "Retirar no Local"):
@@ -541,7 +581,6 @@ elif menu == "Portal do Motoboy":
         
     st.markdown("<h2 style='text-align: center; color: #F14C14;'>🛵 Portal do Entregador</h2>", unsafe_allow_html=True)
     
-    # 4.1 TELA DE LOGIN DO MOTOBOY
     if not st.session_state['motoboy_autenticado']:
         motoboys_ativos = carregar_motoboys(ativos_apenas=True)
         if not motoboys_ativos:
@@ -571,7 +610,6 @@ elif menu == "Portal do Motoboy":
                         st.warning("Por favor, selecione seu nome na lista.")
         st.stop() 
         
-    # 4.2 TELA DE ENTREGAS DO MOTOBOY LOGADO
     st_autorefresh(interval=15000, limit=None, key="atualizacao_portal_motoboy")
     
     nome_motoboy_logado = st.session_state['motoboy_nome']
@@ -600,7 +638,6 @@ elif menu == "Portal do Motoboy":
                 st.markdown(f"**📍 Endereço:** {row['endereco']}")
                 st.markdown(f"**💰 Receber:** R$ {float(row['total']):.2f} - Forma: **{row['pagamento']}**")
                 
-                # POPOVER DE CONFIRMAÇÃO PARA O MOTOBOY
                 with st.popover("✅ Confirmar Entrega Realizada", use_container_width=True):
                     st.markdown("Tem certeza que finalizou esta entrega?")
                     if st.button("Sim, confirmar entrega", key=f"conf_motoboy_{row['id']}", type="primary", use_container_width=True):
@@ -719,11 +756,36 @@ elif menu == "Configurações":
     st.title("⚙️ Configurações do Sistema")
     st.write("Ajuste as preferências de funcionamento do painel gerencial.")
     
+    st.subheader("Controle de Expediente")
+    
+    status_manual = get_config('loja_aberta')
+    is_manual_on = True if status_manual == 'ativado' else False
+    novo_status_manual = st.toggle("🏪 Loja Aberta (Desative para fechar o delivery em imprevistos ou feriados)", value=is_manual_on)
+    novo_val_manual = 'ativado' if novo_status_manual else 'desativado'
+    
+    if novo_val_manual != status_manual:
+        set_config('loja_aberta', novo_val_manual)
+        st.success("Status de abertura da loja atualizado!")
+        st.rerun()
+
+    status_auto = get_config('horario_auto')
+    is_auto_on = True if status_auto == 'ativado' else False
+    novo_status_auto = st.toggle("🕒 Seguir Horário Automático (Seg a Sáb, 10:45 às 14:30)", value=is_auto_on)
+    novo_val_auto = 'ativado' if novo_status_auto else 'desativado'
+    
+    if novo_val_auto != status_auto:
+        set_config('horario_auto', novo_val_auto)
+        st.success("Configuração de horário automático atualizada!")
+        st.rerun()
+        
+    st.divider()
+
     st.subheader("Notificações e Alertas")
     status_atual_alarme = get_config('alarme_sonoro')
     is_alarme_on = True if status_atual_alarme == 'ativado' else False
     novo_status_alarme = st.toggle("🔔 Tocar alarme sonoro quando chegar um Novo Pedido", value=is_alarme_on)
     novo_valor_bd = 'ativado' if novo_status_alarme else 'desativado'
+    
     if novo_valor_bd != status_atual_alarme:
         set_config('alarme_sonoro', novo_valor_bd)
         st.success(f"Preferência de alarme atualizada para: **{novo_valor_bd.upper()}**!")
@@ -794,13 +856,10 @@ elif menu == "Painel da Cozinha":
 
                 motoboy_selecionado = st.selectbox("Vincular Motoboy:", lista_nomes_motoboys, key=f"sel_moto_{row['id']}")
 
-                # BOTÕES DE AÇÃO COM CONFIRMAÇÃO (POPOVER)
                 col1, col2, col3, col4 = st.columns(4)
-                
                 if col1.button("Produção", key=f"prod_{row['id']}", use_container_width=True): 
                     atualizar_status_pedido(row['id'], "Em Produção", motoboy_selecionado)
                     st.rerun()
-                    
                 if col2.button("Entrega", key=f"ent_{row['id']}", use_container_width=True): 
                     atualizar_status_pedido(row['id'], "Saiu para Entrega", motoboy_selecionado)
                     st.rerun()
