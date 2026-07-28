@@ -1,3 +1,16 @@
+Entendo perfeitamente! Esse é um problema clássico de desenvolvimento web e mobile. Quando o celular do cliente está no Modo Noturno (Dark Mode), o navegador tenta "forçar" um fundo escuro nos elementos do sistema, mas se o aplicativo não tiver regras claras para isso, o texto continua escuro ou o campo de digitação fica cinza-escuro com letra preta, tornando tudo ilegível.
+
+Para resolver isso de forma definitiva e garantir legibilidade **em qualquer celular (seja Modo Claro ou Modo Noturno)**, nós ajustamos o CSS global do aplicativo.
+
+### O que foi ajustado nesta versão:
+
+1. **Forçamento de Contraste Alto em Caixas de Texto (`input`, `select`, `textarea`):** Definimos explicitamente que as caixas de digitação do formulário, observações e seleções sempre terão fundo claro e texto escuro muito bem destacado, independentemente do tema do celular do cliente.
+2. **Estilização dos Rótulos (Labels) e Textos:** Forçamos que todos os títulos e rótulos dos campos (como "Nome Completo", "Seu WhatsApp", "Observações") tenham uma cor escura fixa e legível.
+3. **Cards do Cardápio Imunizados contra o Modo Noturno:** Garantimos que os cartões do cardápio mantenham o fundo branco puro com texto em verde petróleo/preto, evitando que o navegador do celular inverta as cores dos cards de comida.
+
+Pode copiar todo o código abaixo e substituir no seu arquivo `app.py`:
+
+```python
 import datetime
 import urllib.parse
 import psycopg2 
@@ -331,22 +344,69 @@ except Exception as e:
 # ==========================================
 st.set_page_config(page_title="Bem Caseiro Delivery", page_icon="🍲", layout="centered")
 
+# CSS ATUALIZADO: SUPORTE COMPLETO AO MODO NOTURNO DO CELULAR (DARK MODE)
 st.markdown("""
     <style>
         #MainMenu {visibility: hidden;}
         header {visibility: hidden;}
         footer {visibility: hidden;}
-        .stApp { background-color: #F7F9FC; }
-        h1, h2, h3, h4, .stMarkdown p strong { color: #005753 !important; font-family: 'Helvetica Neue', sans-serif; }
-        .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: #F7F9FC; padding-bottom: 5px; }
-        .stTabs [data-baseweb="tab"] { background-color: white; border-radius: 12px 12px 0 0; padding: 10px 24px; border: 1px solid #E0E6ED; border-bottom: none; color: #005753; font-weight: 600; }
+        .stApp { background-color: #F7F9FC !important; }
+        
+        /* Títulos e Textos Gerais */
+        h1, h2, h3, h4, p, label, .stMarkdown p strong { 
+            color: #005753 !important; 
+            font-family: 'Helvetica Neue', sans-serif; 
+        }
+        
+        /* Força rótulos de formulários e textos de ajuda a ficarem visíveis */
+        .stTextInput label, .stSelectbox label, .stNumberInput label, .stCheckbox label {
+            color: #1A3038 !important;
+            font-weight: 600 !important;
+        }
+
+        /* TRAVA DE COMPATIBILIDADE COM MODO NOTURNO PARA CAMPOS DE TEXTO */
+        input[type="text"], input[type="password"], input[type="number"], select, textarea, div[role="combobox"] {
+            background-color: #FFFFFF !important;
+            color: #111111 !important;
+            border: 1px solid #C0C8D0 !important;
+            border-radius: 8px !important;
+            -webkit-text-fill-color: #111111 !important;
+        }
+
+        /* Estilização das caixas e listas suspensas (Selectbox) */
+        div[data-baseweb="select"] > div {
+            background-color: #FFFFFF !important;
+            color: #111111 !important;
+        }
+        div[data-baseweb="popover"] div {
+            background-color: #FFFFFF !important;
+            color: #111111 !important;
+        }
+
+        /* Abas de Navegação (Alimentos / Bebidas) */
+        .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: #F7F9FC !important; padding-bottom: 5px; }
+        .stTabs [data-baseweb="tab"] { background-color: white !important; border-radius: 12px 12px 0 0; padding: 10px 24px; border: 1px solid #E0E6ED; border-bottom: none; color: #005753 !important; font-weight: 600; }
         .stTabs [aria-selected="true"] { background-color: #005753 !important; color: white !important; border-color: #005753 !important; }
-        .stButton > button { background-color: white; color: #F14C14 !important; border: 2px solid #F14C14 !important; border-radius: 12px !important; font-weight: 700 !important; padding: 8px 16px !important; transition: all 0.3s ease; width: 100%; }
+        
+        /* Botões Secundários */
+        .stButton > button { background-color: white !important; color: #F14C14 !important; border: 2px solid #F14C14 !important; border-radius: 12px !important; font-weight: 700 !important; padding: 8px 16px !important; transition: all 0.3s ease; width: 100%; }
         .stButton > button:hover { background-color: #F14C14 !important; color: white !important; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(241, 76, 20, 0.2); }
+        
+        /* Botão Principal */
         button[kind="primary"] { background-color: #F14C14 !important; color: white !important; border: none !important; border-radius: 12px !important; padding: 20px !important; font-size: 18px !important; box-shadow: 0 4px 15px rgba(241, 76, 20, 0.3) !important; }
         button[kind="primary"]:hover { background-color: #D63E0E !important; box-shadow: 0 6px 20px rgba(214, 62, 14, 0.4) !important; }
-        [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] { background-color: white; padding: 20px; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04); margin-bottom: 12px; border: 1px solid #F0F2F5; }
-        .esgotado-badge { background-color: #ffebee; color: #d32f2f; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; display: inline-block; margin-top: 5px; }
+        
+        /* Cards do Cardápio */
+        [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] { 
+            background-color: white !important; 
+            padding: 20px; 
+            border-radius: 16px; 
+            box-shadow: 0 2px 12px rgba(0,0,0,0.04); 
+            margin-bottom: 12px; 
+            border: 1px solid #F0F2F5; 
+        }
+        
+        .esgotado-badge { background-color: #ffebee !important; color: #d32f2f !important; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; display: inline-block; margin-top: 5px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -479,13 +539,11 @@ if menu == "Fazer Pedido (Cliente)":
                                     
                             with col_add:
                                 if not esgotado:
-                                    # Conta quanto deste item exato o cliente já colocou no carrinho
                                     qtd_no_carrinho = 0
                                     for k, v in st.session_state['carrinho'].items():
                                         if v['id'] == item['id']:
                                             qtd_no_carrinho += v['qtd']
                                             
-                                    # INDICADOR VISUAL INDIVIDUAL DE CARRINHO
                                     if qtd_no_carrinho > 0:
                                         st.markdown(f"<div style='color: #00C853; font-weight: bold; font-size: 13px; margin-bottom: 5px; text-align: center;'>✅ {qtd_no_carrinho} no carrinho</div>", unsafe_allow_html=True)
                                             
@@ -497,7 +555,6 @@ if menu == "Fazer Pedido (Cliente)":
                                         qtd_desejada = st.number_input("Qtd", min_value=1, max_value=estoque_disponivel, value=1, key=f"qtd_item_{item['id']}")
                                         
                                         if loja_aberta:
-                                            # MUDA O TEXTO DO BOTÃO SE JÁ TIVER NO CARRINHO
                                             texto_botao = "+ Adicionar Mais" if qtd_no_carrinho > 0 else "Adicionar"
                                             
                                             if st.button(texto_botao, key=f"btn_add_{item['id']}", use_container_width=True):
@@ -795,7 +852,7 @@ elif menu == "Gestão de Motoboys":
     st.subheader("Equipe de Entrega")
     lista_motoboys_banco = carregar_motoboys(ativos_apenas=False)
     
-    if not lista_motoboys_banco: st.info("Nenhum motoboy cadastrado. Adicione sua equipe acima.")
+    if not lista_motoboys_banco: st.info("Nenhum motoboy cadastrado.")
     else:
         for moto in lista_motoboys_banco:
             with st.container():
@@ -1004,3 +1061,5 @@ elif menu == "Relatório Financeiro":
                     tabela_moto_html = acerto_motoboys.to_html(index=False, classes='table table-striped') if not acerto_motoboys.empty else "<p>Sem corridas no período.</p>"
                     relatorio_html = f"<html><head><style>body {{ font-family: Arial, sans-serif; padding: 20px; }} h1, h2 {{ color: #005753; text-align: center; }} .resumo {{ display: flex; justify-content: space-around; background-color: #F7F9FC; padding: 15px; border-radius: 10px; margin-bottom: 20px; }} .resumo-box {{ text-align: center; font-weight: bold; font-size: 16px; }} table {{ width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 12px; }} th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }} th {{ background-color: #005753; color: white; }} .btn-imprimir {{ display: block; width: 100%; padding: 15px; background: #F14C14; color: #fff; border: none; cursor: pointer; font-weight: bold; font-size: 16px; border-radius: 8px; }} @media print {{ .btn-imprimir {{ display: none; }} }}</style></head><body><h1>Relatório Gerencial - Bem Caseiro</h1><p style='text-align: center;'>Período: {data_inicio} até {data_fim}</p><div class='resumo'><div class='resumo-box'>Faturamento Bruto<br><span style='color: #F14C14;'>R$ {faturamento_total:,.2f}</span></div><div class='resumo-box'>Produtos<br><span style='color: #F14C14;'>R$ {faturamento_produtos:,.2f}</span></div><div class='resumo-box'>Taxas/Fretes<br><span style='color: #F14C14;'>R$ {total_fretes:,.2f}</span></div></div><h2>Acerto de Motoboys</h2>{tabela_moto_html}<h2>Histórico de Pedidos</h2>{tabela_vendas_html}<br><br><button class='btn-imprimir' onclick='window.print()'>🖨️ CLIQUE AQUI PARA IMPRIMIR OU SALVAR COMO PDF</button></body></html>"
                     components.html(relatorio_html, height=600, scrolling=True)
+
+```
