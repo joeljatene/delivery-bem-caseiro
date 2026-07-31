@@ -14,7 +14,7 @@ from streamlit_autorefresh import st_autorefresh
 warnings.filterwarnings('ignore', category=UserWarning)
 
 # ==========================================
-# 0. CONFIGURAÇÕES GERAIS
+# 0. CONFIGURAÇÕES GERAIS E SESSÃO
 # ==========================================
 NUMERO_WHATSAPP = "5595981136537" 
 
@@ -26,6 +26,8 @@ if 'motoboy_autenticado' not in st.session_state:
     st.session_state['motoboy_autenticado'] = False
 if 'motoboy_nome' not in st.session_state:
     st.session_state['motoboy_nome'] = ""
+if 'pedido_finalizado' not in st.session_state:
+    st.session_state['pedido_finalizado'] = None
 
 # ==========================================
 # 1. FUNÇÕES DE BANCO DE DADOS (PostgreSQL)
@@ -400,15 +402,43 @@ elif horario_auto == 'ativado':
     elif not (hora_abertura <= hora_atual <= hora_fechamento): loja_aberta = False
 
 # ==========================================
-# 3. MÓDULO DO CLIENTE (CARDÁPIO)
+# 3. MÓDULO DO CLIENTE (CARDÁPIO E CHECKOUT)
 # ==========================================
 if menu == "Fazer Pedido (Cliente)":
-    
+
     col_vazia1, col_logo, col_vazia2 = st.columns([1, 2, 1])
     with col_logo:
         if os.path.exists("logo.png"): st.image("logo.png", width="stretch")
         elif os.path.exists("image.png"): st.image("image.png", width="stretch")
         else: st.markdown("<h1 style='text-align: center; color: #005753;'>Bem Caseiro Delivery</h1>", unsafe_allow_html=True)
+
+    # TELA DE SUCESSO (PÓS-PEDIDO)
+    if st.session_state.get('pedido_finalizado'):
+        st.markdown(f"""
+        <div style="background-color: white; padding: 30px; border-radius: 12px; text-align: center; border: 3px solid #00C853; margin-top: 10px; margin-bottom: 20px;">
+            <div style="font-size: 50px;">✅</div>
+            <h2 style="color: #005753; margin-top: 10px;">Pedido Recebido!</h2>
+            <p style="font-size: 18px; color: #333;">O seu pedido <b>#{st.session_state['pedido_finalizado']}</b> foi enviado direto para a nossa cozinha.</p>
+            <p style="font-size: 16px; font-weight: bold; color: #F14C14; background-color: #FFF3E0; padding: 10px; border-radius: 8px; margin-top: 15px;">
+                Aguarde! O restaurante irá confirmar o seu pedido através do WhatsApp em instantes.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("⬅️ Voltar ao Cardápio", use_container_width=True):
+            st.session_state['pedido_finalizado'] = None
+            st.rerun()
+            
+        st.markdown("---")
+        msg_suporte = "Olá, Bem Caseiro! Preciso de uma ajuda/tirar uma dúvida sobre o meu pedido."
+        link_suporte = f"https://wa.me/{NUMERO_WHATSAPP}?text={urllib.parse.quote(msg_suporte)}"
+        st.markdown(f"""
+        <div style='text-align: center;'>
+            <p style='color: #888888; font-size: 14px;'>Ficou com alguma dúvida?</p>
+            <a href="{link_suporte}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #E0E6ED; color: #005753; text-decoration: none; font-size: 15px; font-weight: bold; border-radius: 8px;">💬 Falar com o Atendimento</a>
+        </div>
+        """, unsafe_allow_html=True)
+        st.stop() # Pausa a tela aqui para não mostrar o cardápio embaixo
 
     st.markdown("<h3 style='text-align: center;'>Faça o seu Pedido</h3>", unsafe_allow_html=True)
     st.markdown("<div style='text-align: center; color: #F14C14; font-size: 16px; font-weight: bold; margin-bottom: 20px; padding: 10px; background-color: white; border-radius: 10px; box-shadow: 0px 2px 5px rgba(0,0,0,0.05);'>⏱️ Tempo estimado de entrega: até 30 minutos</div>", unsafe_allow_html=True)
@@ -501,9 +531,10 @@ if menu == "Fazer Pedido (Cliente)":
             with aba_alimentos: renderizar_itens("Alimentos")
             with aba_bebidas: renderizar_itens("Bebidas")
 
+            # MÓDULO DE CARRINHO E CHECKOUT MELHORADO
             if len(st.session_state['carrinho']) > 0:
                 st.write("---")
-                st.subheader("🛒 Resumo do Pedido")
+                st.markdown("<h2 style='color: #005753;'>🛒 Seu Carrinho</h2>", unsafe_allow_html=True)
                 total_itens = 0.0
                 carrinho_formatado_para_banco = []
 
@@ -541,11 +572,9 @@ if menu == "Fazer Pedido (Cliente)":
                             if st.button("🗑️", key=f"del_cart_{chave}"):
                                 del st.session_state['carrinho'][chave]
                                 st.rerun()
-                            
-                st.markdown(f"<h3 style='text-align: right;'>Subtotal: R$ {total_itens:.2f}</h3>", unsafe_allow_html=True)
-                st.write("---")
 
-                st.subheader("🛵 Entrega e Pagamento")
+                st.write("---")
+                st.markdown("<h2 style='color: #005753;'>🛵 Entrega e Pagamento</h2>", unsafe_allow_html=True)
                 telefone_input = st.text_input("Seu WhatsApp (Somente números)", placeholder="Ex: 95999999999")
                 
                 cli_nome, cli_bairro, cli_rua, telefone_limpo = "", "", "", ""
@@ -572,53 +601,63 @@ if menu == "Fazer Pedido (Cliente)":
                             cli_rua = cliente_dados[2]
                     else: st.warning("Digite o telefone completo com o DDD.")
 
-                with st.form("form_cliente"):
-                    nome_cliente = st.text_input("Nome Completo", value=cli_nome)
-                    col_bairro, col_rua = st.columns([1, 2])
-                    with col_bairro:
-                        idx_bairro = nomes_bairros.index(cli_bairro) if cli_bairro in nomes_bairros else 0
-                        bairro_selecionado = st.selectbox("Bairro", nomes_bairros, index=idx_bairro)
-                    with col_rua:
-                        endereco_rua = st.text_input("Rua, Número e Referência", value=cli_rua)
+                nome_cliente = st.text_input("Nome Completo", value=cli_nome)
+                col_bairro, col_rua = st.columns([1, 2])
+                with col_bairro:
+                    idx_bairro = nomes_bairros.index(cli_bairro) if cli_bairro in nomes_bairros else 0
+                    bairro_selecionado = st.selectbox("Bairro", nomes_bairros, index=idx_bairro)
+                with col_rua:
+                    endereco_rua = st.text_input("Rua, Número e Referência", value=cli_rua)
 
-                    pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
-                    troco = st.text_input("Troco para quanto? (Se for dinheiro)")
+                pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
+                troco = st.text_input("Troco para quanto? (Se for dinheiro)")
 
-                    st.write("") 
-                    
-                    if loja_aberta:
-                        enviar = st.form_submit_button("Finalizar Pedido via WhatsApp", type="primary", use_container_width=True)
-                    else:
-                        enviar = st.form_submit_button("Restaurante Fechado", disabled=True, use_container_width=True)
+                # RESUMO FINANCEIRO DINÂMICO
+                valor_frete = float(dict_taxas[bairro_selecionado])
+                total_geral = total_itens + valor_frete
 
-                    if enviar:
+                st.markdown(f"""
+                <div style='background-color: #F7F9FC; border: 1px solid #E0E6ED; border-radius: 10px; padding: 20px; margin-top: 15px; margin-bottom: 25px;'>
+                    <h4 style='margin-top: 0; color: #005753; text-align: center;'>Resumo Final</h4>
+                    <div style='display: flex; justify-content: space-between; margin-bottom: 8px;'>
+                        <span style='font-size: 16px;'>Subtotal (Itens):</span> <strong style='font-size: 16px;'>R$ {total_itens:.2f}</strong>
+                    </div>
+                    <div style='display: flex; justify-content: space-between; margin-bottom: 8px; color: #F14C14;'>
+                        <span style='font-size: 16px;'>Taxa de Entrega:</span> <strong style='font-size: 16px;'>R$ {valor_frete:.2f}</strong>
+                    </div>
+                    <hr style='border: 1px dashed #C0C8D0; margin: 15px 0;'>
+                    <div style='display: flex; justify-content: space-between; color: #005753;'>
+                        <span style='font-size: 20px; font-weight: bold;'>Total a Pagar:</span> <strong style='font-size: 20px; font-weight: bold;'>R$ {total_geral:.2f}</strong>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if loja_aberta:
+                    if st.button("🚀 Confirmar Pedido", type="primary", use_container_width=True):
                         if telefone_limpo and nome_cliente and carrinho_formatado_para_banco and (endereco_rua or "Retirar no Local" in bairro_selecionado):
-                            valor_frete = float(dict_taxas[bairro_selecionado])
                             endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if "Retirar no Local" not in bairro_selecionado else bairro_selecionado
-                            total_geral = total_itens + valor_frete
                             pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
                             
                             salvar_cliente(telefone_limpo, nome_cliente, bairro_selecionado, endereco_rua)
                             pedido_id = salvar_novo_pedido(nome_cliente, telefone_limpo, endereco_completo, carrinho_formatado_para_banco, total_geral, pagamento_formatado, valor_frete)
-
-                            texto_pedido = f"Olá, Bem Caseiro! Gostaria de confirmar meu pedido #{pedido_id}:\n\n👤 *Cliente:* {nome_cliente}\n📱 *Contato:* {telefone_limpo}\n📍 *Endereço:* {endereco_completo}\n\n*Itens do Pedido:*\n"
-                            for item in carrinho_formatado_para_banco: texto_pedido += f"- {item['qtd']}x {item['nome']} (R$ {item['subtotal']:.2f})\n"
-                            texto_pedido += f"\n📦 *Subtotal:* R$ {total_itens:.2f}\n🛵 *Taxa de Entrega:* R$ {valor_frete:.2f}\n💰 *Total Geral:* R$ {total_geral:.2f}\n💳 *Pagamento:* {pagamento_formatado}"
-
-                            link_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={urllib.parse.quote(texto_pedido)}"
+                            
+                            # Registra o sucesso na sessão para mostrar a tela de recebido
+                            st.session_state['pedido_finalizado'] = pedido_id
                             st.session_state['carrinho'] = {}
-                            st.success(f"✅ Pedido #{pedido_id} registrado! Valor Total: R$ {total_geral:.2f}.")
-                            st.markdown(f'<a href="{link_whatsapp}" target="_blank" style="display: block; padding: 15px 20px; background-color: #25D366; color: white; text-align: center; text-decoration: none; font-size: 18px; font-weight: bold; border-radius: 12px; margin-top: 15px;">📱 Enviar Pedido para o Restaurante</a>', unsafe_allow_html=True)
-                        else: st.error("Por favor, preencha os dados de entrega obrigatórios.")
+                            st.rerun()
+                        else:
+                            st.error("⚠️ Por favor, preencha o Nome, WhatsApp e Endereço para finalizar.")
+                else:
+                    st.button("Restaurante Fechado", disabled=True, use_container_width=True)
 
-            # BOTÃO DE DÚVIDAS E PROBLEMAS (SUPORTE AO CLIENTE)
+            # BOTÃO DE DÚVIDAS FIXO NO FINAL DO CARDÁPIO
             st.markdown("---")
             msg_suporte = "Olá, Bem Caseiro! Preciso de uma ajuda/tirar uma dúvida."
             link_suporte = f"https://wa.me/{NUMERO_WHATSAPP}?text={urllib.parse.quote(msg_suporte)}"
             st.markdown(f"""
             <div style='text-align: center; margin-top: 20px; margin-bottom: 20px;'>
-                <p style='color: #888888; font-size: 14px;'>Teve algum problema com o app ou tem alguma dúvida?</p>
-                <a href="{link_suporte}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #E0E6ED; color: #005753; text-decoration: none; font-size: 15px; font-weight: bold; border-radius: 8px;">💬 Falar direto com o Atendimento</a>
+                <p style='color: #888888; font-size: 14px;'>Ficou com alguma dúvida?</p>
+                <a href="{link_suporte}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #E0E6ED; color: #005753; text-decoration: none; font-size: 15px; font-weight: bold; border-radius: 8px;">💬 Falar com o Atendimento</a>
             </div>
             """, unsafe_allow_html=True)
 
@@ -772,7 +811,7 @@ elif menu == "Gestão do Cardápio":
             st.write("---")
 
 # ==========================================
-# GESTÃO DE BAIRROS E TAXAS DE ENTREGA (NOVO)
+# GESTÃO DE BAIRROS E TAXAS DE ENTREGA
 # ==========================================
 elif menu == "Gestão de Bairros/Taxas":
     st.title("📍 Bairros e Taxas de Entrega")
@@ -953,8 +992,8 @@ elif menu == "Painel da Cozinha":
                 if len(tel_cliente) >= 10:
                     if not tel_cliente.startswith('55'): tel_cliente = '55' + tel_cliente
                     mensagens_status = {
-                        "Novo": f"Olá {row['cliente']}! Recebemos seu pedido #{row['id']} no Bem Caseiro. Em breve começaremos a preparar! 🍲",
-                        "Em Produção": f"Olá {row['cliente']}! Seu pedido #{row['id']} já está na cozinha sendo preparado com muito carinho! 👨‍🍳",
+                        "Novo": f"Olá {row['cliente']}! Seu pedido #{row['id']} foi RECEBIDO pelo Bem Caseiro. Estamos analisando... 🍲",
+                        "Em Produção": f"Olá {row['cliente']}! Seu pedido #{row['id']} foi CONFIRMADO pelo restaurante e já está sendo preparado com muito carinho! 👨‍🍳",
                         "Saiu para Entrega": f"Opa {row['cliente']}! O seu pedido #{row['id']} acabou de sair para entrega. O motoboy já está a caminho! 🛵💨"
                     }
                     if mensagens_status.get(row['status'], ""):
@@ -968,7 +1007,7 @@ elif menu == "Painel da Cozinha":
                 motoboy_selecionado = st.selectbox("Vincular Motoboy:", lista_nomes_motoboys, key=f"sel_moto_{row['id']}")
 
                 col1, col2, col3, col4 = st.columns(4)
-                if col1.button("Produção", key=f"prod_{row['id']}", use_container_width=True): atualizar_status_pedido(row['id'], "Em Produção", motoboy_selecionado); st.rerun()
+                if col1.button("✅ Aceitar Pedido", key=f"prod_{row['id']}", use_container_width=True): atualizar_status_pedido(row['id'], "Em Produção", motoboy_selecionado); st.rerun()
                 if col2.button("Entrega", key=f"ent_{row['id']}", use_container_width=True): atualizar_status_pedido(row['id'], "Saiu para Entrega", motoboy_selecionado); st.rerun()
                 with col3.popover("✅ Concluir", use_container_width=True):
                     if st.button("Sim, concluir", key=f"conf_conc_{row['id']}", type="primary", use_container_width=True):
