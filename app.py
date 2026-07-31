@@ -348,6 +348,7 @@ st.markdown("""
         button[kind="primary"]:hover { background-color: #D63E0E !important; box-shadow: 0 6px 20px rgba(214, 62, 14, 0.4) !important; }
         [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] { background-color: white !important; padding: 20px; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04); margin-bottom: 12px; border: 1px solid #F0F2F5; }
         .esgotado-badge { background-color: #ffebee !important; color: #d32f2f !important; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; display: inline-block; margin-top: 5px; }
+        .passo-titulo { border-left: 5px solid #F14C14; padding-left: 12px; color: #005753; margin-top: 30px; margin-bottom: 15px; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -438,7 +439,7 @@ if menu == "Fazer Pedido (Cliente)":
             <a href="{link_suporte}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #E0E6ED; color: #005753; text-decoration: none; font-size: 15px; font-weight: bold; border-radius: 8px;">💬 Falar com o Atendimento</a>
         </div>
         """, unsafe_allow_html=True)
-        st.stop() # Pausa a tela aqui para não mostrar o cardápio embaixo
+        st.stop() 
 
     st.markdown("<h3 style='text-align: center;'>Faça o seu Pedido</h3>", unsafe_allow_html=True)
     st.markdown("<div style='text-align: center; color: #F14C14; font-size: 16px; font-weight: bold; margin-bottom: 20px; padding: 10px; background-color: white; border-radius: 10px; box-shadow: 0px 2px 5px rgba(0,0,0,0.05);'>⏱️ Tempo estimado de entrega: até 30 minutos</div>", unsafe_allow_html=True)
@@ -464,6 +465,9 @@ if menu == "Fazer Pedido (Cliente)":
         if not itens_disponiveis:
             st.warning("Nosso cardápio está sendo atualizado no momento. Volte em alguns minutos!")
         else:
+            # --- PASSO 1 VISUAL ---
+            st.markdown("<h3 class='passo-titulo'>1️⃣ PASSO 1: O que vamos comer hoje?</h3>", unsafe_allow_html=True)
+            
             aba_alimentos, aba_bebidas = st.tabs(["🍽️ Alimentos", "🥤 Bebidas"])
 
             def renderizar_itens(categoria_filtro):
@@ -490,12 +494,9 @@ if menu == "Fazer Pedido (Cliente)":
                                 if not esgotado:
                                     if opcoes_lista: sabor_selecionado = st.selectbox("Opções/Sabores:", opcoes_lista, key=f"sabor_{item['id']}")
                                     
-                                    # LÓGICA DE DICAS DINÂMICAS PARA OBSERVAÇÕES
                                     if categoria_filtro == "Bebidas":
-                                        if "suco" in item['nome'].lower():
-                                            dica_obs = "Ex: sem açúcar, sem gelo"
-                                        else:
-                                            dica_obs = "Ex: bem gelado, com copo"
+                                        if "suco" in item['nome'].lower(): dica_obs = "Ex: sem açúcar, sem gelo"
+                                        else: dica_obs = "Ex: bem gelado, com copo"
                                     else:
                                         dica_obs = "Ex: sem cebola, carne bem passada"
                                         
@@ -531,10 +532,13 @@ if menu == "Fazer Pedido (Cliente)":
             with aba_alimentos: renderizar_itens("Alimentos")
             with aba_bebidas: renderizar_itens("Bebidas")
 
-            # MÓDULO DE CARRINHO E CHECKOUT MELHORADO
+            # MÓDULO DE CARRINHO E CHECKOUT
             if len(st.session_state['carrinho']) > 0:
+                
+                # --- PASSO 2 VISUAL ---
                 st.write("---")
-                st.markdown("<h2 style='color: #005753;'>🛒 Seu Carrinho</h2>", unsafe_allow_html=True)
+                st.markdown("<h3 class='passo-titulo'>2️⃣ PASSO 2: Confira o seu Pedido</h3>", unsafe_allow_html=True)
+                
                 total_itens = 0.0
                 carrinho_formatado_para_banco = []
 
@@ -573,8 +577,10 @@ if menu == "Fazer Pedido (Cliente)":
                                 del st.session_state['carrinho'][chave]
                                 st.rerun()
 
+                # --- PASSO 3 VISUAL ---
                 st.write("---")
-                st.markdown("<h2 style='color: #005753;'>🛵 Entrega e Pagamento</h2>", unsafe_allow_html=True)
+                st.markdown("<h3 class='passo-titulo'>3️⃣ PASSO 3: Onde vamos entregar?</h3>", unsafe_allow_html=True)
+                
                 telefone_input = st.text_input("Seu WhatsApp (Somente números)", placeholder="Ex: 95999999999")
                 
                 cli_nome, cli_bairro, cli_rua, telefone_limpo = "", "", "", ""
@@ -599,7 +605,7 @@ if menu == "Fazer Pedido (Cliente)":
                             cli_nome = cliente_dados[0]
                             cli_bairro = cliente_dados[1] if cliente_dados[1] in nomes_bairros else nomes_bairros[0]
                             cli_rua = cliente_dados[2]
-                    else: st.warning("Digite o telefone completo com o DDD.")
+                    else: st.warning("Digite o telefone completo com o DDD para buscarmos seu cadastro.")
 
                 nome_cliente = st.text_input("Nome Completo", value=cli_nome)
                 col_bairro, col_rua = st.columns([1, 2])
@@ -610,7 +616,7 @@ if menu == "Fazer Pedido (Cliente)":
                     endereco_rua = st.text_input("Rua, Número e Referência", value=cli_rua)
 
                 pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
-                troco = st.text_input("Troco para quanto? (Se for dinheiro)")
+                troco = st.text_input("Troco para quanto? (Se for dinheiro)", placeholder="Deixe em branco se não precisar")
 
                 # RESUMO FINANCEIRO DINÂMICO
                 valor_frete = float(dict_taxas[bairro_selecionado])
@@ -633,7 +639,7 @@ if menu == "Fazer Pedido (Cliente)":
                 """, unsafe_allow_html=True)
 
                 if loja_aberta:
-                    if st.button("🚀 Confirmar Pedido", type="primary", use_container_width=True):
+                    if st.button("🚀 Finalizar e Enviar Pedido", type="primary", use_container_width=True):
                         if telefone_limpo and nome_cliente and carrinho_formatado_para_banco and (endereco_rua or "Retirar no Local" in bairro_selecionado):
                             endereco_completo = f"{bairro_selecionado} - {endereco_rua}" if "Retirar no Local" not in bairro_selecionado else bairro_selecionado
                             pagamento_formatado = f"{pagamento} (Troco: R$ {troco})" if pagamento == "Dinheiro" and troco else pagamento
@@ -641,16 +647,15 @@ if menu == "Fazer Pedido (Cliente)":
                             salvar_cliente(telefone_limpo, nome_cliente, bairro_selecionado, endereco_rua)
                             pedido_id = salvar_novo_pedido(nome_cliente, telefone_limpo, endereco_completo, carrinho_formatado_para_banco, total_geral, pagamento_formatado, valor_frete)
                             
-                            # Registra o sucesso na sessão para mostrar a tela de recebido
                             st.session_state['pedido_finalizado'] = pedido_id
                             st.session_state['carrinho'] = {}
                             st.rerun()
                         else:
-                            st.error("⚠️ Por favor, preencha o Nome, WhatsApp e Endereço para finalizar.")
+                            st.error("⚠️ Atenção: Por favor, preencha o Nome, WhatsApp e Endereço para finalizar.")
                 else:
                     st.button("Restaurante Fechado", disabled=True, use_container_width=True)
 
-            # BOTÃO DE DÚVIDAS FIXO NO FINAL DO CARDÁPIO
+            # BOTÃO DE DÚVIDAS FIXO
             st.markdown("---")
             msg_suporte = "Olá, Bem Caseiro! Preciso de uma ajuda/tirar uma dúvida."
             link_suporte = f"https://wa.me/{NUMERO_WHATSAPP}?text={urllib.parse.quote(msg_suporte)}"
@@ -912,7 +917,7 @@ elif menu == "Gestão de Motoboys":
                             st.rerun()
 
 # ==========================================
-# 7. CONFIGURAÇÕES DO SISTEMA
+# 7. CONFIGURAÇÕES DO SISTEMA E QR CODE
 # ==========================================
 elif menu == "Configurações":
     st.title("⚙️ Configurações do Sistema")
@@ -948,6 +953,18 @@ elif menu == "Configurações":
         set_config('alarme_sonoro', novo_valor_bd)
         st.success(f"Preferência de alarme atualizada para: **{novo_valor_bd.upper()}**!")
         st.rerun()
+
+    st.divider()
+    
+    # GERADOR DE QR CODE PARA PANFLETOS
+    st.subheader("📱 Gerador de QR Code (Panfletos e Mesas)")
+    st.write("Cole abaixo o link do seu aplicativo gerado pelo Streamlit (Ex: *https://bemcaseiro.streamlit.app*) para gerar o seu QR Code para impressão.")
+    link_app = st.text_input("Link do Aplicativo:")
+    if link_app:
+        link_codificado = urllib.parse.quote(link_app)
+        url_qr = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={link_codificado}"
+        st.image(url_qr, width=250)
+        st.markdown(f'<a href="{url_qr}" target="_blank" download="qrcode_bemcaseiro.png">📥 Clique aqui para baixar a imagem do QR Code</a>', unsafe_allow_html=True)
 
 # ==========================================
 # 8. MÓDULO DA COZINHA
