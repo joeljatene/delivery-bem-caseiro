@@ -33,10 +33,18 @@ if 'pedido_finalizado' not in st.session_state:
 # 1. FUNÇÕES DE BANCO DE DADOS (PostgreSQL)
 # ==========================================
 def get_conexao():
-    # Tenta puxar a variável de ambiente do Render; se falhar, tenta o formato Streamlit
+    # Tenta puxar a variável de ambiente do Render; se falhar, tenta o formato Streamlit de forma segura
     db_url = os.environ.get("DB_URL")
     if not db_url:
-        db_url = st.secrets["connections"]["supabase"]["url"]
+        try:
+            db_url = st.secrets["connections"]["supabase"]["url"]
+        except Exception:
+            db_url = None
+            
+    if not db_url:
+        st.error("⚠️ ERRO DE CONFIGURAÇÃO: Variável de ambiente 'DB_URL' não encontrada no Render.")
+        st.stop()
+        
     return psycopg2.connect(db_url)
 
 def inicializar_banco():
@@ -326,7 +334,7 @@ def excluir_motoboy(motoboy_id):
 try:
     inicializar_banco()
 except Exception as e:
-    st.error(f"Erro de conexão com o banco de dados Supabase: {e}")
+    st.error(f"Erro ao inicializar o banco de dados: {e}")
 
 # ==========================================
 # 2. CONFIGURAÇÃO VISUAL E ROTEAMENTO
@@ -370,8 +378,11 @@ if is_admin:
         if st.button("Acessar Painel", type="primary"):
             senha_correta = os.environ.get("ADMIN_PASSWORD")
             if not senha_correta:
-                senha_correta = st.secrets.get("admin_password", "152506")
-            
+                try:
+                    senha_correta = st.secrets.get("admin_password", "152506")
+                except Exception:
+                    senha_correta = "152506"
+                    
             if senha == senha_correta:
                 st.session_state['autenticado'] = True
                 st.rerun()
@@ -537,7 +548,9 @@ if menu == "Fazer Pedido (Cliente)":
             with aba_alimentos: renderizar_itens("Alimentos")
             with aba_bebidas: renderizar_itens("Bebidas")
 
+            # MÓDULO DE CARRINHO E CHECKOUT
             if len(st.session_state['carrinho']) > 0:
+                
                 st.write("---")
                 st.markdown("<h3 class='passo-titulo'>2️⃣ PASSO 2: Confira o seu Pedido</h3>", unsafe_allow_html=True)
                 
