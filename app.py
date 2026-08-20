@@ -33,7 +33,10 @@ if 'pedido_finalizado' not in st.session_state:
 # 1. FUNÇÕES DE BANCO DE DADOS (PostgreSQL)
 # ==========================================
 def get_conexao():
-    db_url = st.secrets["connections"]["supabase"]["url"]
+    # Tenta puxar a variável de ambiente do Render; se falhar, tenta o formato Streamlit
+    db_url = os.environ.get("DB_URL")
+    if not db_url:
+        db_url = st.secrets["connections"]["supabase"]["url"]
     return psycopg2.connect(db_url)
 
 def inicializar_banco():
@@ -365,7 +368,11 @@ if is_admin:
         st.markdown("<h2 style='text-align: center;'>🔒 Acesso à Gestão</h2>", unsafe_allow_html=True)
         senha = st.text_input("Digite a senha de Gestão:", type="password")
         if st.button("Acessar Painel", type="primary"):
-            if senha == st.secrets.get("admin_password", "152506"):
+            senha_correta = os.environ.get("ADMIN_PASSWORD")
+            if not senha_correta:
+                senha_correta = st.secrets.get("admin_password", "152506")
+            
+            if senha == senha_correta:
                 st.session_state['autenticado'] = True
                 st.rerun()
             else: st.error("Senha incorreta.")
@@ -413,7 +420,6 @@ if menu == "Fazer Pedido (Cliente)":
         elif os.path.exists("image.png"): st.image("image.png", width="stretch")
         else: st.markdown("<h1 style='text-align: center; color: #005753;'>Bem Caseiro Delivery</h1>", unsafe_allow_html=True)
 
-    # TELA DE SUCESSO (PÓS-PEDIDO)
     if st.session_state.get('pedido_finalizado'):
         st.markdown(f"""
         <div style="background-color: white; padding: 30px; border-radius: 12px; text-align: center; border: 3px solid #00C853; margin-top: 10px; margin-bottom: 20px;">
@@ -465,7 +471,6 @@ if menu == "Fazer Pedido (Cliente)":
         if not itens_disponiveis:
             st.warning("Nosso cardápio está sendo atualizado no momento. Volte em alguns minutos!")
         else:
-            # --- PASSO 1 VISUAL ---
             st.markdown("<h3 class='passo-titulo'>1️⃣ PASSO 1: O que vamos comer hoje?</h3>", unsafe_allow_html=True)
             
             aba_alimentos, aba_bebidas = st.tabs(["🍽️ Alimentos", "🥤 Bebidas"])
@@ -532,10 +537,7 @@ if menu == "Fazer Pedido (Cliente)":
             with aba_alimentos: renderizar_itens("Alimentos")
             with aba_bebidas: renderizar_itens("Bebidas")
 
-            # MÓDULO DE CARRINHO E CHECKOUT
             if len(st.session_state['carrinho']) > 0:
-                
-                # --- PASSO 2 VISUAL ---
                 st.write("---")
                 st.markdown("<h3 class='passo-titulo'>2️⃣ PASSO 2: Confira o seu Pedido</h3>", unsafe_allow_html=True)
                 
@@ -577,7 +579,6 @@ if menu == "Fazer Pedido (Cliente)":
                                 del st.session_state['carrinho'][chave]
                                 st.rerun()
 
-                # --- PASSO 3 VISUAL ---
                 st.write("---")
                 st.markdown("<h3 class='passo-titulo'>3️⃣ PASSO 3: Onde vamos entregar?</h3>", unsafe_allow_html=True)
                 
@@ -618,7 +619,6 @@ if menu == "Fazer Pedido (Cliente)":
                 pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão (Entrega)", "Dinheiro"])
                 troco = st.text_input("Troco para quanto? (Se for dinheiro)", placeholder="Deixe em branco se não precisar")
 
-                # RESUMO FINANCEIRO DINÂMICO
                 valor_frete = float(dict_taxas[bairro_selecionado])
                 total_geral = total_itens + valor_frete
 
@@ -655,7 +655,6 @@ if menu == "Fazer Pedido (Cliente)":
                 else:
                     st.button("Restaurante Fechado", disabled=True, use_container_width=True)
 
-            # BOTÃO DE DÚVIDAS FIXO
             st.markdown("---")
             msg_suporte = "Olá, Bem Caseiro! Preciso de uma ajuda/tirar uma dúvida."
             link_suporte = f"https://wa.me/{NUMERO_WHATSAPP}?text={urllib.parse.quote(msg_suporte)}"
@@ -956,9 +955,8 @@ elif menu == "Configurações":
 
     st.divider()
     
-    # GERADOR DE QR CODE PARA PANFLETOS
     st.subheader("📱 Gerador de QR Code (Panfletos e Mesas)")
-    st.write("Cole abaixo o link do seu aplicativo gerado pelo Streamlit (Ex: *https://bemcaseiro.streamlit.app*) para gerar o seu QR Code para impressão.")
+    st.write("Cole abaixo o link do seu aplicativo gerado pelo Render (Ex: *https://bemcaseiro.onrender.com*) para gerar o seu QR Code para impressão.")
     link_app = st.text_input("Link do Aplicativo:")
     if link_app:
         link_codificado = urllib.parse.quote(link_app)
