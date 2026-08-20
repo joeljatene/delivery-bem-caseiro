@@ -28,61 +28,29 @@ if 'motoboy_nome' not in st.session_state:
     st.session_state['motoboy_nome'] = ""
 if 'pedido_finalizado' not in st.session_state:
     st.session_state['pedido_finalizado'] = None
+if 'pedido_finalizado_detalhes' not in st.session_state:
+    st.session_state['pedido_finalizado_detalhes'] = {}
 
 # ==========================================
 # 1. FUNÇÕES DE BANCO DE DADOS (PostgreSQL)
 # ==========================================
 def get_conexao():
-    # Tenta puxar a variável de ambiente do Render; se falhar, tenta o formato Streamlit de forma segura
     db_url = os.environ.get("DB_URL")
     if not db_url:
-        try:
-            db_url = st.secrets["connections"]["supabase"]["url"]
-        except Exception:
-            db_url = None
-            
+        try: db_url = st.secrets["connections"]["supabase"]["url"]
+        except Exception: db_url = None
     if not db_url:
-        st.error("⚠️ ERRO DE CONFIGURAÇÃO: Variável de ambiente 'DB_URL' não encontrada no Render.")
+        st.error("⚠️ ERRO: Variável 'DB_URL' não encontrada.")
         st.stop()
-        
     return psycopg2.connect(db_url)
 
 def inicializar_banco():
     conn = get_conexao()
     c = conn.cursor()
-    
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS pedidos (
-            id SERIAL PRIMARY KEY,
-            data_hora TEXT,
-            cliente TEXT,
-            telefone TEXT,
-            endereco TEXT,
-            itens TEXT,
-            total NUMERIC,
-            pagamento TEXT,
-            status TEXT,
-            taxa_entrega NUMERIC,
-            motoboy TEXT
-        )
-    ''')
-    
+    c.execute('''CREATE TABLE IF NOT EXISTS pedidos (id SERIAL PRIMARY KEY, data_hora TEXT, cliente TEXT, telefone TEXT, endereco TEXT, itens TEXT, total NUMERIC, pagamento TEXT, status TEXT, taxa_entrega NUMERIC, motoboy TEXT)''')
     c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='pedidos' AND column_name='motoboy'")
     if not c.fetchone(): c.execute("ALTER TABLE pedidos ADD COLUMN motoboy TEXT")
-    
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS cardapio (
-            id SERIAL PRIMARY KEY,
-            nome TEXT,
-            preco NUMERIC,
-            disponivel INTEGER,
-            imagem TEXT,
-            categoria TEXT DEFAULT 'Alimentos',
-            estoque INTEGER DEFAULT -1,
-            opcoes TEXT DEFAULT ''
-        )
-    ''')
-    
+    c.execute('''CREATE TABLE IF NOT EXISTS cardapio (id SERIAL PRIMARY KEY, nome TEXT, preco NUMERIC, disponivel INTEGER, imagem TEXT, categoria TEXT DEFAULT 'Alimentos', estoque INTEGER DEFAULT -1, opcoes TEXT DEFAULT '')''')
     c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='cardapio' AND column_name='estoque'")
     if not c.fetchone(): c.execute("ALTER TABLE cardapio ADD COLUMN estoque INTEGER DEFAULT -1")
     c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='cardapio' AND column_name='opcoes'")
@@ -97,51 +65,38 @@ def inicializar_banco():
         ]
         c.executemany("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria, estoque, opcoes) VALUES (%s, %s, %s, %s, %s, %s, %s)", itens_iniciais)
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS bairros_entrega (
-            id SERIAL PRIMARY KEY,
-            nome TEXT,
-            taxa NUMERIC,
-            ativo INTEGER DEFAULT 1
-        )
-    ''')
-    
+    c.execute('''CREATE TABLE IF NOT EXISTS bairros_entrega (id SERIAL PRIMARY KEY, nome TEXT, taxa NUMERIC, ativo INTEGER DEFAULT 1)''')
     c.execute("SELECT COUNT(*) FROM bairros_entrega")
     if c.fetchone()[0] == 0:
-        bairros_iniciais = [
-            ("Retirar no Local (Rua Valério Magalhães 454, São Francisco)", 0.00, 1),
-            ("Centro", 5.00, 1), ("São Francisco", 5.00, 1), ("São Vicente", 6.00, 1),
-            ("Bairro dos Estados", 6.00, 1), ("Caçari", 7.00, 1), ("Paraviana", 7.00, 1),
-            ("Mecejana", 6.00, 1), ("Caimbé", 7.00, 1), ("Buritis", 7.00, 1),
-            ("Pintolândia", 10.00, 1), ("Cauamé", 12.00, 1), ("Liberdade", 6.00, 1),
-            ("Asa Branca", 7.00, 1), ("Pricumã", 6.00, 1), ("Centenário", 8.00, 1),
-            ("Aeroporto", 9.00, 1), ("13 de Setembro", 6.00, 1), ("Jardim Floresta", 8.00, 1),
-            ("Jardim Primavera", 8.00, 1), ("Santa Luzia", 9.00, 1), ("Nova Cidade", 10.00, 1),
-            ("Senador Hélio Campos", 10.00, 1), ("Tancredo Neves", 9.00, 1), ("Operário", 10.00, 1),
-            ("Raiar do Sol", 11.00, 1), ("Bela Vista", 11.00, 1), ("Nova Canaã", 10.00, 1),
-            ("Cinturão Verde", 9.00, 1), ("Cruzeiro", 10.00, 1), ("Equatorial", 11.00, 1),
-            ("Alvorada", 10.00, 1), ("Caranã", 8.00, 1), ("Canarinho", 6.00, 1)
-        ]
+        bairros_iniciais = [("Retirar no Local (Rua Valério Magalhães 454, São Francisco)", 0.00, 1), ("Centro", 5.00, 1), ("Cauamé", 12.00, 1)]
         c.executemany("INSERT INTO bairros_entrega (nome, taxa, ativo) VALUES (%s, %s, %s)", bairros_iniciais)
 
     c.execute('CREATE TABLE IF NOT EXISTS clientes (telefone TEXT PRIMARY KEY, nome TEXT, bairro TEXT, endereco_rua TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS motoboys (id SERIAL PRIMARY KEY, nome TEXT, telefone TEXT, ativo INTEGER DEFAULT 1, senha TEXT)')
     c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='motoboys' AND column_name='senha'")
     if not c.fetchone(): c.execute("ALTER TABLE motoboys ADD COLUMN senha TEXT")
-
     c.execute('CREATE TABLE IF NOT EXISTS configuracoes (chave TEXT PRIMARY KEY, valor TEXT)')
     config_iniciais = [('alarme_sonoro', 'ativado'), ('loja_aberta', 'ativado'), ('horario_auto', 'ativado')]
     for chave, valor in config_iniciais:
         c.execute("SELECT valor FROM configuracoes WHERE chave = %s", (chave,))
         if not c.fetchone(): c.execute("INSERT INTO configuracoes (chave, valor) VALUES (%s, %s)", (chave, valor))
-
     conn.commit()
     conn.close()
 
+# Memória Cache para deixar a leitura de bairros e cardápio instantânea
+@st.cache_data(ttl=300)
 def carregar_bairros(ativos_apenas=False):
     conn = get_conexao()
     if ativos_apenas: df = pd.read_sql_query("SELECT * FROM bairros_entrega WHERE ativo = 1 ORDER BY nome", conn)
     else: df = pd.read_sql_query("SELECT * FROM bairros_entrega ORDER BY ativo DESC, nome", conn)
+    conn.close()
+    return df.to_dict('records')
+
+@st.cache_data(ttl=5)
+def carregar_cardapio_completo():
+    conn = get_conexao()
+    try: df = pd.read_sql_query("SELECT id, nome, preco, disponivel, imagem, categoria, estoque, opcoes FROM cardapio ORDER BY disponivel DESC, categoria ASC, nome ASC", conn)
+    except: df = pd.read_sql_query("SELECT *, 'Alimentos' as categoria, -1 as estoque, '' as opcoes FROM cardapio ORDER BY disponivel DESC, id ASC", conn)
     conn.close()
     return df.to_dict('records')
 
@@ -151,6 +106,7 @@ def adicionar_bairro(nome, taxa):
     c.execute("INSERT INTO bairros_entrega (nome, taxa, ativo) VALUES (%s, %s, 1)", (nome, taxa))
     conn.commit()
     conn.close()
+    carregar_bairros.clear()
 
 def editar_bairro(bairro_id, nome, taxa):
     conn = get_conexao()
@@ -158,6 +114,7 @@ def editar_bairro(bairro_id, nome, taxa):
     c.execute("UPDATE bairros_entrega SET nome = %s, taxa = %s WHERE id = %s", (nome, taxa, bairro_id))
     conn.commit()
     conn.close()
+    carregar_bairros.clear()
 
 def alternar_status_bairro(bairro_id, ativo):
     conn = get_conexao()
@@ -165,6 +122,7 @@ def alternar_status_bairro(bairro_id, ativo):
     c.execute("UPDATE bairros_entrega SET ativo = %s WHERE id = %s", (ativo, bairro_id))
     conn.commit()
     conn.close()
+    carregar_bairros.clear()
 
 def excluir_bairro(bairro_id):
     conn = get_conexao()
@@ -172,6 +130,7 @@ def excluir_bairro(bairro_id):
     c.execute("DELETE FROM bairros_entrega WHERE id = %s", (bairro_id,))
     conn.commit()
     conn.close()
+    carregar_bairros.clear()
 
 def get_config(chave, padrao=""):
     conn = get_conexao()
@@ -238,7 +197,6 @@ def carregar_pedidos_ativos():
 def atualizar_status_pedido(pedido_id, novo_status, motoboy=None):
     conn = get_conexao()
     c = conn.cursor()
-    
     if novo_status == "Cancelado":
         c.execute("SELECT status, itens FROM pedidos WHERE id = %s", (pedido_id,))
         resultado = c.fetchone()
@@ -248,7 +206,6 @@ def atualizar_status_pedido(pedido_id, novo_status, motoboy=None):
                 item_id = item.get('id')
                 qtd = int(item.get('qtd', 1))
                 if item_id: c.execute("UPDATE cardapio SET estoque = estoque + %s WHERE id = %s AND estoque != -1", (qtd, item_id))
-                    
     if motoboy: c.execute("UPDATE pedidos SET status = %s, motoboy = %s WHERE id = %s", (novo_status, motoboy, pedido_id))
     else: c.execute("UPDATE pedidos SET status = %s WHERE id = %s", (novo_status, pedido_id))
     conn.commit()
@@ -261,19 +218,13 @@ def carregar_vendas_concluidas():
     conn.close()
     return df
 
-def carregar_cardapio_completo():
-    conn = get_conexao()
-    try: df = pd.read_sql_query("SELECT id, nome, preco, disponivel, imagem, categoria, estoque, opcoes FROM cardapio ORDER BY disponivel DESC, categoria ASC, nome ASC", conn)
-    except: df = pd.read_sql_query("SELECT *, 'Alimentos' as categoria, -1 as estoque, '' as opcoes FROM cardapio ORDER BY disponivel DESC, id ASC", conn)
-    conn.close()
-    return df.to_dict('records')
-
 def adicionar_prato(nome, preco, imagem, categoria, estoque, opcoes):
     conn = get_conexao()
     c = conn.cursor()
     c.execute("INSERT INTO cardapio (nome, preco, disponivel, imagem, categoria, estoque, opcoes) VALUES (%s, %s, 1, %s, %s, %s, %s)", (nome, preco, imagem, categoria, estoque, opcoes))
     conn.commit()
     conn.close()
+    carregar_cardapio_completo.clear()
 
 def atualizar_disponibilidade(prato_id, disponivel):
     conn = get_conexao()
@@ -281,6 +232,7 @@ def atualizar_disponibilidade(prato_id, disponivel):
     c.execute("UPDATE cardapio SET disponivel = %s WHERE id = %s", (disponivel, prato_id))
     conn.commit()
     conn.close()
+    carregar_cardapio_completo.clear()
 
 def excluir_prato(prato_id):
     conn = get_conexao()
@@ -288,6 +240,7 @@ def excluir_prato(prato_id):
     c.execute("DELETE FROM cardapio WHERE id = %s", (prato_id,))
     conn.commit()
     conn.close()
+    carregar_cardapio_completo.clear()
 
 def editar_prato(prato_id, nome, preco, imagem, categoria, estoque, opcoes):
     conn = get_conexao()
@@ -295,6 +248,7 @@ def editar_prato(prato_id, nome, preco, imagem, categoria, estoque, opcoes):
     c.execute("UPDATE cardapio SET nome = %s, preco = %s, imagem = %s, categoria = %s, estoque = %s, opcoes = %s WHERE id = %s", (nome, preco, imagem, categoria, estoque, opcoes, prato_id))
     conn.commit()
     conn.close()
+    carregar_cardapio_completo.clear()
 
 def carregar_motoboys(ativos_apenas=False):
     conn = get_conexao()
@@ -341,6 +295,21 @@ except Exception as e:
 # ==========================================
 st.set_page_config(page_title="Bem Caseiro Delivery", page_icon="🍲", layout="centered")
 
+# BLOQUEIO DE TRADUÇÃO AUTOMÁTICA (Impede os textos zoados do navegador)
+components.html("""
+    <script>
+        const doc = window.parent.document;
+        doc.documentElement.lang = 'pt-BR';
+        doc.documentElement.setAttribute('translate', 'no');
+        if(!doc.querySelector('meta[name="google"]')) {
+            const meta = doc.createElement('meta');
+            meta.name = 'google';
+            meta.content = 'notranslate';
+            doc.head.appendChild(meta);
+        }
+    </script>
+""", height=0, width=0)
+
 st.markdown("""
     <style>
         #MainMenu {visibility: hidden;} header {visibility: hidden;} footer {visibility: hidden;}
@@ -359,7 +328,7 @@ st.markdown("""
         button[kind="primary"]:hover { background-color: #D63E0E !important; box-shadow: 0 6px 20px rgba(214, 62, 14, 0.4) !important; }
         [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] { background-color: white !important; padding: 20px; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04); margin-bottom: 12px; border: 1px solid #F0F2F5; }
         .esgotado-badge { background-color: #ffebee !important; color: #d32f2f !important; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; display: inline-block; margin-top: 5px; }
-        .passo-titulo { border-left: 5px solid #F14C14; padding-left: 12px; color: #005753; margin-top: 30px; margin-bottom: 15px; font-weight: bold; }
+        .passo-titulo { border-left: 5px solid #F14C14; padding-left: 12px; color: #005753; margin-top: 30px; margin-bottom: 15px; font-weight: bold; text-transform: uppercase; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -378,10 +347,8 @@ if is_admin:
         if st.button("Acessar Painel", type="primary"):
             senha_correta = os.environ.get("ADMIN_PASSWORD")
             if not senha_correta:
-                try:
-                    senha_correta = st.secrets.get("admin_password", "152506")
-                except Exception:
-                    senha_correta = "152506"
+                try: senha_correta = st.secrets.get("admin_password", "152506")
+                except Exception: senha_correta = "152506"
                     
             if senha == senha_correta:
                 st.session_state['autenticado'] = True
@@ -420,6 +387,18 @@ elif horario_auto == 'ativado':
     if dia_semana == 6: loja_aberta = False
     elif not (hora_abertura <= hora_atual <= hora_fechamento): loja_aberta = False
 
+# Callbacks do Carrinho (Para atualizar tudo super rápido e sem bugs de tela cinza)
+def add_ao_carrinho(chave_item, id_item, nome, preco, qtd):
+    if chave_item in st.session_state['carrinho']: st.session_state['carrinho'][chave_item]['qtd'] += qtd
+    else: st.session_state['carrinho'][chave_item] = {"id": id_item, "nome": nome, "preco": preco, "qtd": qtd}
+
+def update_qtd_carrinho(chave):
+    nova_qtd = st.session_state[f"edit_qtd_{chave}"]
+    st.session_state['carrinho'][chave]['qtd'] = nova_qtd
+
+def remover_do_carrinho(chave):
+    del st.session_state['carrinho'][chave]
+
 # ==========================================
 # 3. MÓDULO DO CLIENTE (CARDÁPIO E CHECKOUT)
 # ==========================================
@@ -431,6 +410,7 @@ if menu == "Fazer Pedido (Cliente)":
         elif os.path.exists("image.png"): st.image("image.png", width="stretch")
         else: st.markdown("<h1 style='text-align: center; color: #005753;'>Bem Caseiro Delivery</h1>", unsafe_allow_html=True)
 
+    # TELA DE SUCESSO (PÓS-PEDIDO COM RESUMO COMPLETO)
     if st.session_state.get('pedido_finalizado'):
         st.markdown(f"""
         <div style="background-color: white; padding: 30px; border-radius: 12px; text-align: center; border: 3px solid #00C853; margin-top: 10px; margin-bottom: 20px;">
@@ -443,8 +423,23 @@ if menu == "Fazer Pedido (Cliente)":
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("⬅️ Voltar ao Cardápio", use_container_width=True):
+        detalhes = st.session_state.get('pedido_finalizado_detalhes')
+        if detalhes:
+            st.markdown(f"""
+            <div style='background-color: #F7F9FC; padding: 20px; border-radius: 10px; border: 1px solid #E0E6ED; margin-bottom: 20px;'>
+                <h4 style='color: #005753; margin-top: 0; text-align: center;'>Resumo do seu Pedido</h4>
+            """, unsafe_allow_html=True)
+            for i in detalhes['itens']:
+                st.markdown(f"**{i['qtd']}x** {i['nome']} — R$ {i['subtotal']:.2f}")
+            st.markdown("---")
+            st.markdown(f"📍 **Endereço:** {detalhes['endereco']}")
+            st.markdown(f"💳 **Pagamento:** {detalhes['pagamento']}")
+            st.markdown(f"🚚 **Frete:** R$ {detalhes['frete']:.2f} | 💰 **Total Pago:** R$ {detalhes['total']:.2f}")
+            st.markdown("</div>", unsafe_allow_html=True)
+        
+        if st.button("⬅️ Fazer Novo Pedido", use_container_width=True):
             st.session_state['pedido_finalizado'] = None
+            st.session_state['pedido_finalizado_detalhes'] = {}
             st.rerun()
             
         st.markdown("---")
@@ -482,7 +477,7 @@ if menu == "Fazer Pedido (Cliente)":
         if not itens_disponiveis:
             st.warning("Nosso cardápio está sendo atualizado no momento. Volte em alguns minutos!")
         else:
-            st.markdown("<h3 class='passo-titulo'>1️⃣ PASSO 1: O que vamos comer hoje?</h3>", unsafe_allow_html=True)
+            st.markdown("<h3 class='passo-titulo'>1️⃣ Passo 1: O que vamos comer hoje?</h3>", unsafe_allow_html=True)
             
             aba_alimentos, aba_bebidas = st.tabs(["🍽️ Alimentos", "🥤 Bebidas"])
 
@@ -510,13 +505,8 @@ if menu == "Fazer Pedido (Cliente)":
                                 if not esgotado:
                                     if opcoes_lista: sabor_selecionado = st.selectbox("Opções/Sabores:", opcoes_lista, key=f"sabor_{item['id']}")
                                     
-                                    if categoria_filtro == "Bebidas":
-                                        if "suco" in item['nome'].lower(): dica_obs = "Ex: sem açúcar, sem gelo"
-                                        else: dica_obs = "Ex: bem gelado, com copo"
-                                    else:
-                                        dica_obs = "Ex: sem cebola, carne bem passada"
-                                        
-                                    obs_input = st.text_input("Observações:", placeholder=dica_obs, key=f"obs_{item['id']}")
+                                    # OBSERVAÇÃO GENÉRICA CORRIGIDA E SIMPLIFICADA
+                                    obs_input = st.text_input("Observações:", placeholder="Ex: Ponto da carne, sem cebola, etc.", key=f"obs_{item['id']}")
                                 else:
                                     st.markdown("<div class='esgotado-badge'>ESGOTADO HOJE</div>", unsafe_allow_html=True)
                                     
@@ -534,15 +524,11 @@ if menu == "Fazer Pedido (Cliente)":
                                         qtd_desejada = st.number_input("Qtd", min_value=1, max_value=estoque_disponivel, value=1, key=f"qtd_item_{item['id']}")
                                         if loja_aberta:
                                             texto_botao = "+ Adicionar Mais" if qtd_no_carrinho > 0 else "Adicionar"
-                                            if st.button(texto_botao, key=f"btn_add_{item['id']}", use_container_width=True):
-                                                nome_com_sabor = f"{item['nome']} ({sabor_selecionado})" if sabor_selecionado else item['nome']
-                                                nome_final = f"{nome_com_sabor} [Obs: {obs_input}]" if obs_input else nome_com_sabor
-                                                chave_item = f"{item['id']}_{sabor_selecionado}_{obs_input}"
-                                                
-                                                if chave_item in st.session_state['carrinho']: st.session_state['carrinho'][chave_item]['qtd'] += qtd_desejada
-                                                else: st.session_state['carrinho'][chave_item] = {"id": item['id'], "nome": nome_final, "preco": float(item['preco']), "qtd": qtd_desejada}
-                                                st.toast(f"{qtd_desejada}x {item['nome']} adicionado ao carrinho!", icon="🛒")
-                                                st.rerun() 
+                                            nome_com_sabor = f"{item['nome']} ({sabor_selecionado})" if sabor_selecionado else item['nome']
+                                            nome_final = f"{nome_com_sabor} [Obs: {obs_input}]" if obs_input else nome_com_sabor
+                                            chave_item = f"{item['id']}_{sabor_selecionado}_{obs_input}"
+                                            
+                                            st.button(texto_botao, key=f"btn_add_{item['id']}", on_click=add_ao_carrinho, args=(chave_item, item['id'], nome_final, float(item['preco']), qtd_desejada), use_container_width=True)
                                         else: st.button("Fechado", key=f"btn_closed_{item['id']}", disabled=True, use_container_width=True)
 
             with aba_alimentos: renderizar_itens("Alimentos")
@@ -552,7 +538,7 @@ if menu == "Fazer Pedido (Cliente)":
             if len(st.session_state['carrinho']) > 0:
                 
                 st.write("---")
-                st.markdown("<h3 class='passo-titulo'>2️⃣ PASSO 2: Confira o seu Pedido</h3>", unsafe_allow_html=True)
+                st.markdown("<h3 class='passo-titulo'>2️⃣ Passo 2: Confira o seu Pedido</h3>", unsafe_allow_html=True)
                 
                 total_itens = 0.0
                 carrinho_formatado_para_banco = []
@@ -578,22 +564,15 @@ if menu == "Fazer Pedido (Cliente)":
                                     
                             max_value_cart = estoque_real if estoque_real != -1 else 30
                             valor_atual = int(item_cart['qtd'])
-                            if valor_atual > max_value_cart:
-                                st.session_state['carrinho'][chave]['qtd'] = max_value_cart
-                                st.rerun()
-                                
-                            nova_qtd = st.number_input("Qtd", min_value=1, max_value=max_value_cart, value=valor_atual, key=f"edit_qtd_{chave}")
-                            if nova_qtd != item_cart['qtd']:
-                                st.session_state['carrinho'][chave]['qtd'] = nova_qtd
-                                st.rerun()
+                            
+                            # CALLBACK DE ATUALIZAÇÃO DIRETA (Resolve o Bug do Total)
+                            st.number_input("Qtd", min_value=1, max_value=max_value_cart, value=valor_atual, key=f"edit_qtd_{chave}", on_change=update_qtd_carrinho, args=(chave,))
                         with col_del:
                             st.write("") 
-                            if st.button("🗑️", key=f"del_cart_{chave}"):
-                                del st.session_state['carrinho'][chave]
-                                st.rerun()
+                            st.button("🗑️", key=f"del_cart_{chave}", on_click=remover_do_carrinho, args=(chave,))
 
                 st.write("---")
-                st.markdown("<h3 class='passo-titulo'>3️⃣ PASSO 3: Onde vamos entregar?</h3>", unsafe_allow_html=True)
+                st.markdown("<h3 class='passo-titulo'>3️⃣ Passo 3: Onde vamos entregar?</h3>", unsafe_allow_html=True)
                 
                 telefone_input = st.text_input("Seu WhatsApp (Somente números)", placeholder="Ex: 95999999999")
                 
@@ -625,7 +604,7 @@ if menu == "Fazer Pedido (Cliente)":
                 col_bairro, col_rua = st.columns([1, 2])
                 with col_bairro:
                     idx_bairro = nomes_bairros.index(cli_bairro) if cli_bairro in nomes_bairros else 0
-                    bairro_selecionado = st.selectbox("Bairro", nomes_bairros, index=idx_bairro)
+                    bairro_selecionado = st.selectbox("Bairro de Entrega", nomes_bairros, index=idx_bairro)
                 with col_rua:
                     endereco_rua = st.text_input("Rua, Número e Referência", value=cli_rua)
 
@@ -661,6 +640,13 @@ if menu == "Fazer Pedido (Cliente)":
                             pedido_id = salvar_novo_pedido(nome_cliente, telefone_limpo, endereco_completo, carrinho_formatado_para_banco, total_geral, pagamento_formatado, valor_frete)
                             
                             st.session_state['pedido_finalizado'] = pedido_id
+                            st.session_state['pedido_finalizado_detalhes'] = {
+                                'itens': carrinho_formatado_para_banco,
+                                'total': total_geral,
+                                'frete': valor_frete,
+                                'endereco': endereco_completo,
+                                'pagamento': pagamento_formatado
+                            }
                             st.session_state['carrinho'] = {}
                             st.rerun()
                         else:
