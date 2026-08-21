@@ -30,6 +30,10 @@ if 'pedido_finalizado' not in st.session_state:
     st.session_state['pedido_finalizado'] = None
 if 'pedido_finalizado_detalhes' not in st.session_state:
     st.session_state['pedido_finalizado_detalhes'] = {}
+if 'mostrar_opcoes_pos_add' not in st.session_state:
+    st.session_state['mostrar_opcoes_pos_add'] = False
+if 'rolar_para_checkout' not in st.session_state:
+    st.session_state['rolar_para_checkout'] = False
 
 # ==========================================
 # 1. FUNÇÕES DE BANCO DE DADOS (PostgreSQL)
@@ -83,7 +87,6 @@ def inicializar_banco():
     conn.commit()
     conn.close()
 
-# Memória Cache para deixar a leitura de bairros e cardápio instantânea
 @st.cache_data(ttl=300)
 def carregar_bairros(ativos_apenas=False):
     conn = get_conexao()
@@ -387,10 +390,11 @@ elif horario_auto == 'ativado':
     if dia_semana == 6: loja_aberta = False
     elif not (hora_abertura <= hora_atual <= hora_fechamento): loja_aberta = False
 
-# Callbacks do Carrinho (Para atualizar tudo super rápido e sem bugs de tela cinza)
+# Callbacks do Carrinho (Para atualizar tudo super rápido e acionar o assistente)
 def add_ao_carrinho(chave_item, id_item, nome, preco, qtd):
     if chave_item in st.session_state['carrinho']: st.session_state['carrinho'][chave_item]['qtd'] += qtd
     else: st.session_state['carrinho'][chave_item] = {"id": id_item, "nome": nome, "preco": preco, "qtd": qtd}
+    st.session_state['mostrar_opcoes_pos_add'] = True
 
 def update_qtd_carrinho(chave):
     nova_qtd = st.session_state[f"edit_qtd_{chave}"]
@@ -453,6 +457,28 @@ if menu == "Fazer Pedido (Cliente)":
         """, unsafe_allow_html=True)
         st.stop() 
 
+    # ASSISTENTE DE COMPRA INVISÍVEL (Roteia o cliente após adicionar um item)
+    if st.session_state.get('mostrar_opcoes_pos_add'):
+        st.markdown("""
+        <div style='background-color: #E8F5E9; border: 2px solid #4CAF50; border-radius: 12px; padding: 25px; text-align: center; margin-top: 15px; margin-bottom: 20px; box-shadow: 0px 4px 10px rgba(76, 175, 80, 0.2);'>
+            <div style='font-size: 50px; margin-bottom: 10px;'>🛒</div>
+            <h2 style='color: #2E7D32; margin-top: 0;'>Adicionado ao Carrinho!</h2>
+            <p style='color: #1A3038; font-size: 16px;'>O que você deseja fazer agora?</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_add, col_fin = st.columns(2)
+        with col_add:
+            if st.button("⬅️ Escolher mais itens", use_container_width=True):
+                st.session_state['mostrar_opcoes_pos_add'] = False
+                st.rerun()
+        with col_fin:
+            if st.button("💳 Ir para o Pagamento", type="primary", use_container_width=True):
+                st.session_state['mostrar_opcoes_pos_add'] = False
+                st.session_state['rolar_para_checkout'] = True
+                st.rerun()
+        st.stop() # Pausa a tela aqui para focar só na decisão
+
     st.markdown("<h3 style='text-align: center;'>Faça o seu Pedido</h3>", unsafe_allow_html=True)
     st.markdown("<div style='text-align: center; color: #F14C14; font-size: 16px; font-weight: bold; margin-bottom: 20px; padding: 10px; background-color: white; border-radius: 10px; box-shadow: 0px 2px 5px rgba(0,0,0,0.05);'>⏱️ Tempo estimado de entrega: até 30 minutos</div>", unsafe_allow_html=True)
 
@@ -505,7 +531,7 @@ if menu == "Fazer Pedido (Cliente)":
                                 if not esgotado:
                                     if opcoes_lista: sabor_selecionado = st.selectbox("Opções/Sabores:", opcoes_lista, key=f"sabor_{item['id']}")
                                     
-                                    # OBSERVAÇÃO GENÉRICA CORRIGIDA E SIMPLIFICADA
+                                    # OBSERVAÇÃO GENÉRICA (Pedido do cliente)
                                     obs_input = st.text_input("Observações:", placeholder="Ex: Ponto da carne, sem cebola, etc.", key=f"obs_{item['id']}")
                                 else:
                                     st.markdown("<div class='esgotado-badge'>ESGOTADO HOJE</div>", unsafe_allow_html=True)
@@ -536,6 +562,9 @@ if menu == "Fazer Pedido (Cliente)":
 
             # MÓDULO DE CARRINHO E CHECKOUT
             if len(st.session_state['carrinho']) > 0:
+                
+                # Âncora invisível para o robô rolar a tela
+                st.markdown("<div id='sessao-checkout'></div>", unsafe_allow_html=True)
                 
                 st.write("---")
                 st.markdown("<h3 class='passo-titulo'>2️⃣ Passo 2: Confira o seu Pedido</h3>", unsafe_allow_html=True)
@@ -663,6 +692,19 @@ if menu == "Fazer Pedido (Cliente)":
                 <a href="{link_suporte}" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #E0E6ED; color: #005753; text-decoration: none; font-size: 15px; font-weight: bold; border-radius: 8px;">💬 Falar com o Atendimento</a>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Script embutido para rolar a tela se o cliente clicou em "Ir para o Pagamento"
+            if st.session_state.get('rolar_para_checkout'):
+                components.html("""
+                    <script>
+                        setTimeout(function() {
+                            const doc = window.parent.document;
+                            const el = doc.getElementById('sessao-checkout');
+                            if(el) { el.scrollIntoView({behavior: 'smooth', block: 'start'}); }
+                        }, 200);
+                    </script>
+                """, height=0)
+                st.session_state['rolar_para_checkout'] = False
 
     except Exception as e:
         st.error(f"Erro de comunicação com o sistema: {e}")
